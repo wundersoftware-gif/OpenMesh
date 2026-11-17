@@ -19,10 +19,10 @@ The target application is WhatsApp Messenger (`com.whatsapp`).
 
 ## Download the lab APK
 
-The installable P2 lab build (0.2.0-p2) and its test client are attached to the
-GitHub release:
+The installable P2 lab build (0.2.0-p2, pre-release) and its test client are
+attached to the GitHub release:
 
-- **OpenMesh lab APK + test client:** <https://github.com/wundersoftware-gif/OpenMesh/releases>
+- **OpenMesh lab APK + test client:** <https://github.com/wundersoftware-gif/OpenMesh/releases/tag/v0.2.0-p2>
 
 Install both APKs to exercise the P2 evidence on an Android 10+ device or
 emulator. This is **not** a working WhatsApp mesh VPN: the debug APK captures

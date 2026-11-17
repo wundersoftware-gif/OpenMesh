@@ -257,4 +257,6 @@ later phase before the earlier one is reproducible on hardware.
 | P2 direct-gateway transcript | `docs/evidence/p2-direct-gateway-2026-11-17.txt` |
 | P2 app screenshot | `docs/evidence/p2-app-gateway-running.png` |
 | Host servers | `docs/evidence/host-test-server-8080.log`, `host-test-server-8081.log` |
+| Release notes and artifact hashes | `docs/evidence/release-notes-v0.2.0-p2.md` |
+| Published lab release | <https://github.com/wundersoftware-gif/OpenMesh/releases/tag/v0.2.0-p2> (pre-release, debug APK + lab client) |
 | Test matrix and methods | `docs/TEST_PLAN.md` |
