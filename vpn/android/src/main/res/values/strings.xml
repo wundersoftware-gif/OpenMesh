@@ -1,0 +1,9 @@
+<resources>
+    <string name="openmesh_notification_title">OpenMesh VPN</string>
+    <string name="openmesh_notification_channel">VPN status</string>
+    <string name="openmesh_notification_channel_description">Shows the state of the OpenMesh tunnel.</string>
+    <string name="openmesh_notification_preparing">Preparing tunnel…</string>
+    <string name="openmesh_notification_capture">Capture only — packets are blocked (no gateway route)</string>
+    <string name="openmesh_notification_tunnel_ready">Tunnel ready — route and Internet are not verified</string>
+    <string name="openmesh_notification_stop">Stop</string>
+</resources>

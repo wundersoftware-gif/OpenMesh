@@ -1,0 +1,53 @@
+P0 fail-closed transcript
+=========================
+
+Device: Android emulator "openmesh_test" (x86_64, Android 16 / API 36)
+Date: 2026-11-17, ~13:07-13:08 UTC
+Build: OpenMesh 0.1.0-p0-debug (debug target com.openmesh.testclient)
+Mode: capture-only (lab direct SOCKS switch OFF)
+
+OpenMesh app state during the run (uiautomator dump):
+
+TUNNEL STATUS: Capturing · fail-closed (ACTIVE)
+Link: UP
+Route: NONE
+Internet: UNKNOWN
+TX 3.5 KB / RX 0 B
+PACKETS OUT 59 / PACKETS IN 0
+ENGINE capture
+
+Captured from the test client UI (uiautomator dump):
+
+13:07:43.640  ----- run started -----
+13:08:03.819  DNS FAILED after 20101 ms: UnknownHostException:
+              Unable to resolve host "example.com": No address associated
+              with hostname <- GaiException: android_getaddrinfo failed:
+              EAI_NODATA (No address associated with hostname)
+13:08:03.829  HTTP GET http://10.0.2.2:8080/health
+13:08:18.869  FAILED after 15038 ms: SocketTimeoutException: failed to
+              connect to /10.0.2.2 (port 8080) from /10.111.0.2 (port 59812)
+              after 15000ms
+13:08:18.872  HTTPS GET https://example.com/
+13:08:38.921  FAILED after 20049 ms: UnknownHostException:
+              Unable to resolve host "example.com": No address associated
+              with hostname <- GaiException: android_getaddrinfo failed:
+              EAI_NODATA (No address associated with hostname)
+13:08:38.922  HTTP GET http://10.0.2.2:8081/health (expected deny)
+13:08:50.941  expected deny after 12013 ms: SocketTimeoutException: failed
+              to connect to /10.0.2.2 (port 8081) from /10.111.0.2 (port 49964)
+              after 12000ms
+13:08:50.948  ----- run finished -----
+
+Host servers:
+- 8080 log last entry remains 13:05:11Z (the P1 run).
+- 8081 log contains no requests at all.
+
+Interpretation
+--------------
+- The traffic source 10.111.0.2 proves the requests came out of the TUN.
+- No packet left the tunnel: DNS failed, TCP timed out, and both host
+  listeners received nothing.
+- RX stayed at 0 while TX increased, which is the expected shape of a
+  drain-and-drop capture path.
+- This run was made with live listeners on both 8080 and 8081, so the
+  timeouts are not explained by a missing server.

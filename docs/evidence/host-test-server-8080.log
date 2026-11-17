@@ -1,0 +1,5 @@
+[2026-11-17T12:49:16.504Z] OpenMesh test server listening on http://0.0.0.0:8080
+[2026-11-17T12:49:16.509Z] Android emulator URL: http://10.0.2.2:8080/health
+[2026-11-17T12:49:16.509Z] Stop with Ctrl+C.
+[2026-11-17T12:51:02.416Z] GET /health -> 200 206 B in 14 ms from 127.0.0.1:56182 ts=12:51:01.498
+[2026-11-17T13:05:11.632Z] GET /health -> 200 206 B in 0 ms from 127.0.0.1:62058 ts=13:05:10.765

@@ -1,0 +1,1 @@
+-keep class com.openmesh.vpn.android.service.OpenMeshVpnService { *; }

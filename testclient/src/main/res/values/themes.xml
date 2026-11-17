@@ -1,0 +1,9 @@
+<resources>
+    <style name="Theme.OpenMeshLab" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#0B0F0E</item>
+        <item name="android:statusBarColor">#0B0F0E</item>
+        <item name="android:navigationBarColor">#0B0F0E</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:colorAccent">#57E3A6</item>
+    </style>
+</resources>
