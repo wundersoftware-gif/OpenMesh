@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      Debug-only lab control surface. Release builds do not include this
+      source set, so the exported receiver never ships.
+    -->
+    <application>
+        <receiver
+            android:name=".DebugControlReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.openmesh.debug.START_GATEWAY" />
+                <action android:name="com.openmesh.debug.STOP_GATEWAY" />
+                <action android:name="com.openmesh.debug.START_VPN" />
+                <action android:name="com.openmesh.debug.STOP_VPN" />
+                <action android:name="com.openmesh.debug.STATUS" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

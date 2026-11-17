@@ -13,6 +13,7 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketException
 import java.net.SocketTimeoutException
+import javax.net.ssl.SSLException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -42,6 +43,22 @@ class Socks5Server(
     private val audit: GatewayAudit = NoopGatewayAudit,
     val metrics: GatewayMetrics = GatewayMetrics(),
     private val protector: SocketProtector = NoopSocketProtector,
+    /**
+     * Optional listening socket factory. The P2 gateway supplies a TLS
+     * [javax.net.ssl.SSLServerSocket] factory here; the P1 frontend leaves it
+     * null and gets a plain loopback socket.
+     */
+    private val serverSocketFactory: (() -> ServerSocket)? = null,
+    private val dnsResolver: DnsResolver = UdpDnsResolver(
+        config.dnsUpstreams,
+        protector,
+        maxResponseBytes = config.maxUdpDnsPayload,
+    ),
+    /**
+     * Runs on every accepted connection before the SOCKS handshake. The TLS
+     * gateway uses it to force the handshake inside the handshake timeout.
+     */
+    private val connectionInitializer: (Socket) -> Unit = {},
 ) : AutoCloseable {
 
     data class Config(
@@ -85,7 +102,7 @@ class Socks5Server(
 
     fun start(): Socks5Server {
         check(!running.get()) { "already started" }
-        val socket = ServerSocket()
+        val socket = serverSocketFactory?.invoke() ?: ServerSocket()
         socket.reuseAddress = true
         protector.protect(socket)
         socket.bind(InetSocketAddress(config.bindAddress, config.port))
@@ -133,6 +150,13 @@ class Socks5Server(
     private fun handleClient(client: Socket) {
         client.soTimeout = config.handshakeTimeoutMillis
         client.tcpNoDelay = true
+        try {
+            connectionInitializer(client)
+        } catch (_: Exception) {
+            // TLS handshake or authentication failed before any SOCKS bytes.
+            metrics.denied()
+            return
+        }
         val input = BufferedInputStream(client.getInputStream())
         val output = BufferedOutputStream(client.getOutputStream())
         val sessionId = sessionIds.incrementAndGet()
@@ -168,7 +192,7 @@ class Socks5Server(
                     audit.onConnectionAccepted(sessionId, request.host, request.port)
                     client.soTimeout = config.idleTimeoutMillis
                     remote.soTimeout = config.idleTimeoutMillis
-                    val (up, down) = pipe(client, remote)
+                    val (up, down) = pipe(client, remote, input, output)
                     metrics.closed(up, down)
                     audit.onConnectionClosed(sessionId, request.host, request.port, up, down)
                 }
@@ -182,6 +206,7 @@ class Socks5Server(
                         audit = audit,
                         metrics = metrics,
                         protector = protector,
+                        resolver = dnsResolver,
                     )
                     val relayAddress = udpRelay.start()
                     sendReply(
@@ -211,6 +236,10 @@ class Socks5Server(
             } catch (_: Exception) {
                 // client vanished
             }
+        } catch (_: SSLException) {
+            // A failed TLS handshake is an authentication failure, not a
+            // SOCKS reply situation.
+            metrics.denied()
         } catch (e: Exception) {
             try {
                 sendReply(output, Socks5.REPLY_GENERAL_FAILURE)
@@ -358,13 +387,18 @@ class Socks5Server(
         Socks5Io.writeAll(output, reply)
     }
 
-    private fun pipe(client: Socket, remote: Socket): Pair<Long, Long> {
+    private fun pipe(
+        client: Socket,
+        remote: Socket,
+        clientInput: InputStream,
+        clientOutput: OutputStream,
+    ): Pair<Long, Long> {
         val up = AtomicLong()
         val down = AtomicLong()
         val done = CountDownLatch(2)
         executor.execute {
             try {
-                up.set(copyStream(client.getInputStream(), remote.getOutputStream(), remote))
+                up.set(copyStream(clientInput, remote.getOutputStream(), remote))
             } catch (_: Exception) {
                 // The other direction may still deliver data; the close below
                 // unblocks it.
@@ -374,7 +408,7 @@ class Socks5Server(
         }
         executor.execute {
             try {
-                down.set(copyStream(remote.getInputStream(), client.getOutputStream(), client))
+                down.set(copyStream(remote.getInputStream(), clientOutput, client))
             } catch (_: Exception) {
                 // see above
             } finally {

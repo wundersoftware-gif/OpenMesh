@@ -1,8 +1,5 @@
 package com.openmesh.gateway.socks5
 
-import java.io.BufferedInputStream
-import java.io.BufferedOutputStream
-import java.io.EOFException
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetAddress
@@ -20,11 +17,27 @@ object Socks5Client {
         port: Int,
         credentials: Socks5Credentials? = null,
     ) {
+        authenticate(socket, credentials)
+        connect(socket, host, port)
+    }
+
+    /**
+     * Negotiates the SOCKS5 method and performs RFC 1929 authentication, but
+     * sends no request. The client uses it to prove that the gateway is
+     * reachable and that the session token is valid before reporting a route.
+     */
+    fun authenticate(socket: Socket, credentials: Socks5Credentials? = null) {
         socket.soTimeout = 15_000
-        val input = BufferedInputStream(socket.getInputStream())
-        val output = BufferedOutputStream(socket.getOutputStream())
-        negotiate(input, output, credentials)
-        sendConnect(input, output, host, port)
+        negotiate(socket.getInputStream(), socket.getOutputStream(), credentials)
+    }
+
+    /**
+     * Sends CONNECT on an already authenticated stream. The caller owns the
+     * socket and must close it on failure.
+     */
+    fun connect(socket: Socket, host: String, port: Int) {
+        socket.soTimeout = 15_000
+        sendConnect(socket.getInputStream(), socket.getOutputStream(), host, port)
     }
 
     private fun negotiate(

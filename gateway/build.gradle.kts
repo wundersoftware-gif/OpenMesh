@@ -16,6 +16,7 @@ kotlin {
 dependencies {
     implementation(project(":core:model"))
     implementation(project(":core:protocol"))
+    implementation(project(":transport"))
     implementation(libs.kotlinx.coroutines.core)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

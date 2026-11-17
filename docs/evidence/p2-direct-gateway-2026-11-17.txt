@@ -1,0 +1,237 @@
+# P2 direct-gateway evidence — 2026-11-17
+
+This file records what was actually executed for the P2 direct-gateway path.
+It is emulator evidence with the lab traffic client, **not** WhatsApp evidence
+and **not** physical-hardware evidence.
+
+Two rounds of runs are described below. The second round (17:24–17:33 UTC)
+re-ran everything with the **final artifacts** that ship in the release:
+
+| Artifact | SHA-256 |
+|---|---|
+| `app-debug.apk` (0.2.0-p2-debug) | `97be392b90eb8c8a6855a2a13daf5fc4a393f5108b74b92a19e552df9b28984e` |
+| `testclient-debug.apk` (0.2.0-p2) | `00e95eb35734c52e1b70d8a2b1ac2071a4dadd0da3e7435121f0f6e23b3605e9` |
+
+## Environment
+
+| Item | Value |
+|---|---|
+| Host | Windows 11, PowerShell |
+| JDK | 21.0.7 LTS (`C:\Program Files\Java\jdk-21`) |
+| Android runtime | two x86_64 Android 16 / API 36 emulators |
+| Gateway device | `emulator-5554`, AVD `openmesh_test` |
+| Client device | `emulator-5556`, AVD `vp_test` |
+| Gateway build | `com.openmesh.app.debug` **0.2.0-p2-debug** |
+| Client build | same debug APK |
+| Captured app | `com.openmesh.testclient` **0.2.0-p2** |
+| Host servers | `node tools/test-server.mjs` on `0.0.0.0:8080`, and `0.0.0.0:8081` as the decoy |
+| Transport between emulators | `adb -s emulator-5554 forward tcp:8443 tcp:8443`; the client dials `10.0.2.2:8443` (host loopback alias) |
+| Gateway identity | self-signed EC P-256 certificate, SHA-256 pin `46676594f8054ae4f0dfc6910fbe74e1904ddf65121419eef8541627fae17ed2` |
+| Gateway authentication | RFC 1929 user/password inside TLS 1.3; token generated on the gateway and copied to the client |
+| Test suite | 45 JVM tests, 0 failures |
+
+The `adb forward` is a **lab harness**. On two physical phones on the same
+network the client dials the gateway's LAN address directly; no forwarding or
+central server is part of the product.
+
+The gateway session token is deliberately not reproduced here. It is a bearer
+secret stored in app-private preferences and can be regenerated in the UI.
+
+## 1. Positive path (final artifacts, 17:25 UTC)
+
+Commands (abridged; `$FP` is the pinned fingerprint, `$TOKEN` the gateway
+token):
+
+```powershell
+adb -s emulator-5554 install -r -t app-debug.apk
+adb -s emulator-5556 install -r -t app-debug.apk
+adb -s emulator-5556 install -r -t testclient-debug.apk
+
+adb -s emulator-5554 forward tcp:8443 tcp:8443
+adb -s emulator-5554 shell am broadcast -a com.openmesh.debug.START_GATEWAY `
+  --ei port 8443 -n com.openmesh.app.debug/com.openmesh.app.DebugControlReceiver
+
+adb -s emulator-5556 shell appops set com.openmesh.app.debug ACTIVATE_VPN allow
+adb -s emulator-5556 shell am broadcast -a com.openmesh.debug.START_VPN `
+  --es mode gateway --es host 10.0.2.2 --ei port 8443 `
+  --es fingerprint $FP --es token $TOKEN `
+  -n com.openmesh.app.debug/com.openmesh.app.DebugControlReceiver
+
+adb -s emulator-5556 shell am start -n com.openmesh.testclient/.MainActivity --ez autoStart true
+```
+
+Gateway log:
+
+```text
+I/OpenMeshGateway: gateway listening on 0.0.0.0:8443 fingerprint=46676594f8054ae4f0dfc6910fbe74e1904ddf65121419eef8541627fae17ed2
+```
+
+Lab client log:
+
+```text
+OpenMesh lab client 0.2.0-p2
+This app is captured only by OpenMesh debug builds.
+----- run started -----
+DNS example.com -> 172.66.147.243, 104.20.23.154,
+                    2606:4700:10::6814:179a, 2606:4700:10::ac42:93f3 (1597 ms)
+HTTP GET http://10.0.2.2:8080/health
+HTTP 200 in 672 ms, declared=206, read=206 bytes
+body: {"service":"openmesh-test-server","status":"ok", ...}
+HTTPS GET https://example.com/
+HTTP 200 in 807 ms, declared=-1, read=577 bytes cipher=TLS_AES_128_GCM_SHA256
+body: <!doctype html>...<title>Example Domain</title>...
+HTTP GET http://10.0.2.2:8081/health (expected deny)
+expected deny after 575 ms: SocketException: Connection reset
+----- run finished -----
+```
+
+Client state (same run):
+
+```text
+vpn=VpnStatus(phase=TUNNEL_READY, targetPackage=com.openmesh.testclient, link=UP,
+route=SELECTED, internet=VERIFIED, gatewayId=10.0.2.2:8443, hops=1, peerCount=0,
+rxBytes=29050, txBytes=11810, rxPackets=75, txPackets=101,
+remoteGateway=true, engineRunning=true,
+probeDetail=example.com answered HTTP 200 via gateway (TLS 1.3),
+probeAtMillis=1794936352328)
+
+gateway=GatewayStatus(running=true, port=8443,
+fingerprint=46676594f8054ae4f0dfc6910fbe74e1904ddf65121419eef8541627fae17ed2,
+accepted=31, denied=3, active=1, bytesToRemote=12556, bytesFromRemote=142613)
+```
+
+Interpretation:
+
+- DNS resolution succeeded through the client frontend, which sends DNS over
+  TCP inside the authenticated gateway TLS session (see §6 for the packet-level
+  proof that no plaintext DNS left the device).
+- The plaintext HTTP request reached the host test server **through the
+  gateway**; the gateway's debug-only exact allowlist is `10.0.2.2:8080`.
+- The nested TLS 1.3 connection to `example.com` completed with
+  `TLS_AES_128_GCM_SHA256` and returned HTTP 200/577 bytes.
+- The decoy listener on `10.0.2.2:8081` was refused; the deny came from the
+  destination policy, not from a missing listener on the client.
+- `Route=SELECTED` and `Internet=VERIFIED` were earned by the real probe, and
+  `probeDetail` names what succeeded.
+
+UI screenshot: [`p2-app-gateway-running.png`](p2-app-gateway-running.png)
+(gateway card, pinned fingerprint and token field).
+
+## 2. Fail-closed when the gateway disappears (17:32 UTC)
+
+Gateway stopped while the client VPN stayed up, then the lab client was run
+again:
+
+```text
+vpn=VpnStatus(phase=NO_ROUTE, targetPackage=com.openmesh.testclient, link=UP,
+route=NONE, internet=FAILED, gatewayId=null, hops=null,
+remoteGateway=true, engineRunning=true,
+probeDetail=gateway unreachable or untrusted:
+SSLHandshakeException: connection closed)
+
+DNS example.com -> 172.66.147.243, 104.20.23.154 (20257 ms)
+HTTP GET http://10.0.2.2:8080/health
+FAILED after 528 ms: SocketException: Connection reset
+HTTPS GET https://example.com/
+FAILED after 1050 ms: SocketException: Connection reset
+HTTP GET http://10.0.2.2:8081/health (expected deny)
+expected deny after 520 ms: SocketException: Connection reset
+```
+
+Note the DNS line: the query was answered after ~20 s from Android's
+**device-local** resolver cache, after the tunnel attempts failed. §6 proves no
+DNS packet left the device on the underlying network. No captured application
+packet reached the real network: every HTTP/HTTPS fetch failed and the client
+had no connector. This is fail-closed for traffic, with a device-local DNS
+cache nuance that is documented rather than hidden.
+
+## 3. Wrong gateway token (earlier round, 15:24 UTC)
+
+Gateway running, client configured with an incorrect token:
+
+```text
+phase=NO_ROUTE, link=UP, route=NONE, internet=FAILED,
+probeDetail=gateway unreachable or untrusted:
+Socks5Exception: SOCKS5 authentication failed
+```
+
+Gateway counters increased `denied` while `accepted` stayed at zero for that
+attempt. TLS 1.3 succeeded (the certificate pin was correct); the RFC 1929
+token was rejected, so no SOCKS request was served.
+
+## 4. Wrong certificate fingerprint (earlier round, 15:27 UTC)
+
+Client configured with a different 32-byte fingerprint:
+
+```text
+phase=NO_ROUTE, link=UP, route=NONE, internet=FAILED,
+probeDetail=gateway unreachable or untrusted: SSLHandshakeException:
+gateway certificate fingerprint mismatch; expected 0000...0001,
+got 46676594f8054ae4f0dfc6910fbe74e1904ddf65121419eef8541627fae17ed2
+```
+
+This is the pinning check, not hostname verification: the certificate is
+self-signed, and the full SHA-256 fingerprint must match exactly.
+
+## 5. Identity persistence
+
+The gateway was stopped and restarted several times on the same install. It
+loaded the identity from `filesDir/openmesh-gateway-identity.p12` and logged the
+same fingerprint every time; clients did not need to re-pin.
+
+## 6. Packet proof: no DNS or traffic leaves the device outside the tunnel
+
+With the gateway down and the VPN active, `tcpdump -i any` was captured on the
+client emulator (`adb root` on the lab AVD; root and tcpdump are lab tools, not
+part of the product) while the lab client ran:
+
+```text
+17:32:36.331660 tun0  Out IP 10.111.0.2.24483 > 1.1.1.1.53:   43148+ [1au] AAAA? example.com. (128)
+17:32:36.994219 tun0  Out IP 10.111.0.2.25242 > 1.1.1.1.53:   46869+ [1au] A? example.com. (128)
+17:32:41.338208 tun0  Out IP 10.111.0.2.31687 > 9.9.9.9.53:   43148+ [1au] AAAA? example.com. (128)
+17:32:42.000882 tun0  Out IP 10.111.0.2.15364 > 9.9.9.9.53:   46869+ [1au] A? example.com. (128)
+17:32:46.344285 tun0  Out IP 10.111.0.2.24483 > 1.1.1.1.53:   43148+ [1au] AAAA? example.com. (128)
+17:32:47.006466 tun0  Out IP 10.111.0.2.25242 > 1.1.1.1.53:   46869+ [1au] A? example.com. (128)
+17:32:51.349860 tun0  Out IP 10.111.0.2.31687 > 9.9.9.9.53:   43148+ [1au] AAAA? example.com. (128)
+17:32:52.012853 tun0  Out IP 10.111.0.2.15364 > 9.9.9.9.53:   46869+ [1au] A? example.com. (128)
+```
+
+Eight packets, all `Out` on `tun0`: every query entered the tunnel and was
+forwarded to the loopback SOCKS frontend, which had no gateway to send it
+through. **Zero DNS packets on `eth0`**, the underlying network. The 5-second
+retry pattern explains the ~20 s DNS time: four attempts, all inside the
+tunnel, then a local cache answer.
+
+## 7. A lab-harness failure that is worth recording
+
+During the first final-artifact run the host test server on port 8080 had
+crashed, so `http://10.0.2.2:8080/health` failed with a connection reset. This
+was diagnosed on the host (`Invoke-WebRequest http://127.0.0.1:8080/health`
+refused) and the server was restarted; the rerun in §1 shows HTTP 200. The
+gateway counted it as a denied connection because the dial failed, which is why
+the lab keeps a **live** decoy on 8081: a dead-port "deny" and a policy deny look
+identical from the client, and only one of them proves the policy.
+
+## 8. What this evidence does not prove
+
+- WhatsApp itself was never installed or run. The debug build captures
+  `com.openmesh.testclient` by design.
+- Both endpoints are emulators on one host, not two physical arm64 phones.
+- The transport between emulators used an `adb forward`; a LAN run is still
+  required.
+- No IPv6 destination was exercised end to end (AAAA answers were returned,
+  but the fetches used IPv4).
+- No relay, multi-hop, BLE or Wi-Fi Direct path exists.
+- Android's device-local DNS cache can answer a query while the gateway is
+  down (§2); no packet leaves the device outside the tunnel, but the answer is
+  not freshly validated by the gateway.
+- The gateway has not been exposed to a hostile network: no fuzzing, no quotas,
+  no revocation, no mutual TLS.
+- The user-visible app is a P2 lab: the gateway is a foreground service, the
+  token lives in app-private preferences (not the Android Keystore), and the
+  debug control receiver is exported in debug builds only.
+
+The honest summary is: **A → C over authenticated TLS 1.3 works in the
+emulator, nothing leaks when C is absent (packet-level proof), and it fails
+closed when C is unauthenticated or untrusted.** The three-phone WhatsApp mesh
+remains untested and unimplemented.

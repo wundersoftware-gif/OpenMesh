@@ -3,6 +3,96 @@
 All notable changes are recorded here. The project is pre-alpha; entries are
 grouped by the phase they belong to.
 
+## [0.2.0-p2] — 2026-11-17
+
+P2: a **direct gateway over authenticated TLS 1.3**. One gateway hop (A → C →
+Internet), no relay. Validated emulator-to-emulator with the lab traffic
+client. The mesh, BLE, Wi-Fi Direct and WhatsApp runs are still not
+implemented.
+
+### Added
+
+- `transport` module: TLS 1.3 client/server contexts, a self-signed EC P-256
+  node identity persisted as PKCS#12, SHA-256 `Fingerprint` handling and
+  `PinnedFingerprintTrustManager`. No custom cryptography: the platform TLS
+  stack does the work, Bouncy Castle only builds the certificate.
+- `gateway`: `GatewayServer` — a TLS 1.3 listener that runs the existing
+  restricted SOCKS5 server on the decrypted stream, with RFC 1929
+  authentication and per-connection TLS.
+- `gateway/client`: `RemoteGatewayConnector` — pinned TLS client socket with
+  `Socks5Client` inside, one cached session per destination.
+- `gateway/socks5`: `DnsResolver` interface plus `UdpDnsResolver` (existing
+  behaviour) and `SocksDnsResolver` (DNS-over-TCP through the gateway to
+  `1.1.1.1:53`/`9.9.9.9:53`).
+- `vpn:android`: `SocksFrontend` abstraction, `RemoteSocksFrontend` (P2 path
+  with injected DNS resolver, connector and TLS settings), `RemoteGatewayProbe`
+  (honest route/Internet probe every 30 s), gateway fields in
+  `VpnStartOptions`/`VpnStatus`/preferences, remote monitor and notifications.
+- `app`: `GatewayService` (foreground service with notification and stop
+  action), `GatewayPreferences`, `GatewayIdentityStore`, `GatewayState`, gateway
+  card in the UI (start/stop, port, fingerprint, token, counters), mode
+  selector with the three modes (direct gateway P2, lab direct P1 debug-only,
+  capture only P0) and a warning explaining what P2 is and is not.
+- `app/src/debug`: `DebugControlReceiver` (debug source set only) for
+  repeatable adb-driven evidence runs: start/stop the gateway and the VPN,
+  dump status to logcat.
+- `testclient`: logs every run to logcat tag `OpenMeshLab` so evidence can be
+  captured without screenshots.
+- ADR 0006 (P2 as a direct TLS gateway), P2 evidence transcript and gateway
+  screenshot under `docs/evidence/`.
+
+### Changed
+
+- `Socks5Server` accepts an external server-socket factory, an injected DNS
+  resolver, a connection initializer and buffered stream piping, so the same
+  tested server serves loopback (P1) and TLS (P2) traffic.
+- `Socks5Client` supports deadlock-free duplex piping after the CONNECT reply.
+- `UdpDnsRelay` routes through the `DnsResolver` abstraction.
+- `VpnControl` publishes gateway-aware status; `VpnStatus` carries
+  `remoteGateway`, `gatewayId`, `hops` and probe detail.
+- `testclient` version bumped to `0.2.0-p2` (versionCode 2).
+
+### Security-relevant
+
+- Gateway certificate pinning by SHA-256 fingerprint; a mismatch aborts the TLS
+  handshake and the route stays `NONE`.
+- Per-gateway RFC 1929 token sent inside TLS; a wrong token is rejected before
+  any SOCKS request is served.
+- Gateway destination policy blocks private/loopback/link-local/CGNAT/
+  multicast/reserved ranges so the gateway cannot be used to reach its own LAN.
+- Fail-closed verified three ways: gateway stopped, wrong token, wrong pin.
+- Known gaps documented, not hidden: bearer token in SharedPreferences (not
+  Keystore), PKCS#12 key in app-private storage, no mutual TLS, no quotas, no
+  revocation, gateway listener on `0.0.0.0:8443` untested against a hostile
+  network.
+
+### Tested
+
+- 45 JVM tests pass (17 frame codec, 8 destination policy, 5 SOCKS5 server,
+  5 tun2socks config, 5 TLS loopback, 5 TLS gateway: pinned handshake, wrong
+  fingerprint, wrong token, private destination denied, DNS-over-TCP).
+- Emulator pair (`emulator-5554` gateway, `emulator-5556` client):
+  DNS 1146 ms, HTTP 200 (206 B), HTTPS 200 (577 B,
+  `TLS_AES_128_GCM_SHA256`), decoy on `10.0.2.2:8081` denied, client
+  `phase=TUNNEL_READY, link=UP, route=SELECTED, internet=VERIFIED,
+  gatewayId=10.0.2.2:8443, hops=1`, gateway `accepted=6, denied=7`.
+- Fail-closed: gateway stopped, wrong token, wrong fingerprint — all
+  `NO_ROUTE` with a visible reason and no leaked traffic.
+- Gateway identity persists across a restart (same fingerprint, no re-pinning).
+- `:app:assembleDebug` and `:testclient:assembleDebug` succeed.
+
+### Not implemented / not validated
+
+- No relay (B), no multi-hop, no BLE, no Wi-Fi Direct, no routing.
+- Not run on physical phones, not run on `arm64-v8a`, not run against WhatsApp;
+  the emulator has no WhatsApp account and no physical device was available.
+- The transport between the two emulators used `adb forward`; a LAN run is
+  still required.
+- No mutual TLS, no Android Keystore storage for token/key, no quotas, no
+  revocation UI, no fuzzing of the TLS/SOCKS surface, no IPv6 end-to-end.
+- No release signing; the release APK remains unsigned and is not distributed.
+- No OMSH frame is carried on any wire yet; P2 carries SOCKS5 inside TLS.
+
 ## [0.1.0-p0] — 2026-11-17
 
 First working repository. P0 and P1 are demonstrated in an Android emulator

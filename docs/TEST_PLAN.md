@@ -16,25 +16,26 @@ reproducible.
 | AGP | 9.0.1 |
 | Kotlin | 2.3.20 |
 | Android SDK | 36, build-tools 36.0.0 |
-| Runtime | Android emulator `openmesh_test` |
+| Runtime | Android emulators `openmesh_test` (P0/P1, P2 gateway) and `vp_test` (P2 client) |
 | ABI | x86_64 |
 | Android | 16 / API 36 |
 | Fingerprint | `google/sdk_gphone64_x86_64/emu64xa:16/BE2A.250530.026.F3/13894323:userdebug/dev-keys` |
 | Display | 1080 × 2400 |
-| Debug app | `com.openmesh.app.debug` version `0.1.0-p0-debug` |
-| Lab client | `com.openmesh.testclient` version `0.1.0` |
+| Debug app | `com.openmesh.app.debug` version `0.2.0-p2-debug` |
+| Lab client | `com.openmesh.testclient` version `0.2.0-p2` |
 | Host server | `node tools/test-server.mjs` on `0.0.0.0:8080` |
 | Decoy server | same script on `0.0.0.0:8081` |
+| P2 link | `adb -s emulator-5554 forward tcp:8443 tcp:8443`; the client dials `10.0.2.2:8443` |
 | VPN consent | pre-granted with `appops set ... ACTIVATE_VPN allow` for unattended runs |
 
 No physical Android device was connected. No WhatsApp account or installation
-exists on the emulator. Every result below is emulator + substitute-app
-evidence, not WhatsApp evidence.
+exists on the emulators. Every result below is emulator + substitute-app
+evidence, not WhatsApp evidence and not physical-hardware evidence.
 
-Artifacts:
+Artifacts (the ones attached to the `v0.2.0-p2` release):
 
-- Debug APK SHA-256: `E6A357DC9E01DADF711FF016C46AB6B09795174B3F220C45DED66F8ACE9B35BD`
-- Lab client APK SHA-256: `DDA2EDD5782ECFD6F4A903000AD854CC23CA93BFCB3ACF0A3F27E67D6DAFE008`
+- Debug APK SHA-256: `97be392b90eb8c8a6855a2a13daf5fc4a393f5108b74b92a19e552df9b28984e`
+- Lab client APK SHA-256: `00e95eb35734c52e1b70d8a2b1ac2071a4dadd0da3e7435121f0f6e23b3605e9`
 - tun2socks AAR SHA-256: `AE8A2E96B80B4ECCCCD037805A4BB4A278090C89DBCAE8BC6FCB7634E9A255B9`
 
 Artifact hashes change whenever the sources change; re-hash before comparing a
@@ -51,7 +52,7 @@ $env:JAVA_HOME = 'C:\Program Files\Java\jdk-21'
 .\gradlew.bat test
 ```
 
-Result on 2026-11-17: **BUILD SUCCESSFUL**, 35 tests, 0 failures, 0 errors.
+Result on 2026-11-17: **BUILD SUCCESSFUL**, 45 tests, 0 failures, 0 errors.
 
 | Suite | Tests | What it proves |
 |---|---|---|
@@ -59,9 +60,12 @@ Result on 2026-11-17: **BUILD SUCCESSFUL**, 35 tests, 0 failures, 0 errors.
 | `gateway.socks5.DestinationPolicyTest` | 8 | Public allowed; RFC1918, loopback, link-local, CGNAT, multicast, ULA, IPv4-mapped private blocked; mixed answers blocked; exact lab allowlist; invalid port/empty resolution |
 | `gateway.socks5.Socks5ServerTest` | 5 | Authenticated CONNECT round-trip over real sockets; no-auth mode; wrong password denied; private destination denied; BIND rejected with `0x07` |
 | `vpn.tun2socks.Tun2SocksConfigTest` | 5 | YAML content, quoted credentials, path escaping, invalid port/MTU, half credentials |
+| `transport.TlsLoopbackTest` | 5 | TLS 1.3 client/server handshake over real sockets, pinned-fingerprint trust behaviour, identity generation and reload |
+| `gateway.GatewayTlsTest` | 5 | Real TLS gateway + pinned client over loopback: successful CONNECT with the token, wrong fingerprint rejected, wrong token rejected, private destination denied, DNS-over-TCP |
 
-The SOCKS test uses a real loopback echo server and a real `Socks5Server`; it is
-not a mock. The lab allowlist is used only to reach `127.0.0.1:<echo port>`.
+The SOCKS and TLS tests use real sockets and real handshakes; they are not
+mocks. The lab allowlist is used only to reach `127.0.0.1:<echo port>` or the
+emulator host alias.
 
 Build checks:
 
@@ -70,8 +74,9 @@ Build checks:
 .\gradlew.bat :app:assembleRelease
 ```
 
-Both succeeded. The release artifact is `app-release-unsigned.apk` and has not
-been installed or run. It is capture-only and targets `com.whatsapp`.
+Both succeeded. The release artifact is `app-release-unsigned.apk`; it has not
+been installed, signed or run. It targets `com.whatsapp`, is **not** attached to
+any release, and must not be treated as validated.
 
 ---
 
@@ -89,18 +94,20 @@ Status: **PASS**, **PARTIAL**, **NOT RUN**, or **BLOCKED**.
 | VPN-006 | Fail-closed with no route | Capture-only mode, live servers on 8080/8081 | **PASS** — DNS failed, TCP timed out from `10.111.0.2`, no server request, RX = 0 |
 | VPN-007 | Stop and reset | UI Stop VPN | **PASS** — `tun0` gone, phase `Disconnected`, counters 0, notification removed |
 | VPN-008 | Revoke handling | `onRevoke` implemented | **NOT RUN** — not triggered on the emulator |
-| GW-001 | SOCKS5 CONNECT | Unit socket test + P1 HTTP/HTTPS | **PASS** |
-| GW-002 | DNS through the tunnel | Test client resolves `example.com`; DNS goes through TUN/SOCKS | **PASS (local lab)**; remote gateway DNS **NOT IMPLEMENTED** |
-| GW-003 | Private destination rejected | Unit tests + live decoy on `10.0.2.2:8081` | **PASS** — denied in 96 ms while the port was listening |
-| GW-004 | Unknown client rejected | Wrong RFC 1929 password | **PASS** — auth failure, denied counter |
+| GW-001 | SOCKS5 CONNECT | Unit socket test + P1 HTTP/HTTPS + P2 HTTPS | **PASS** |
+| GW-002 | DNS through the tunnel | Test client resolves `example.com`; P1 uses DNS-only UDP relay; P2 uses DNS-over-TCP through the gateway | **PASS (local lab)** and **PASS (P2, emulator pair)** |
+| GW-003 | Private destination rejected | Unit tests + live decoy on `10.0.2.2:8081` | **PASS** — denied in ~575 ms while the port was listening, on both P1 and P2 |
+| GW-004 | Unknown client rejected | Wrong RFC 1929 password (P1) and wrong gateway token (P2) | **PASS** — auth failure, denied counter, `NO_ROUTE` |
 | GW-005 | BIND rejected | Raw SOCKS request | **PASS** — reply `0x07` |
 | GW-006 | Connection limits/timeouts | Code inspection + unit coverage of config | **PARTIAL** — not load-tested |
-| MESH-001 | Client to remote gateway | Requires P2 | **NOT IMPLEMENTED** |
+| MESH-001 | Client to remote gateway | Two emulators, gateway + client, TLS 1.3 with pinned fingerprint and token | **PASS (emulator, A → C only)** — not a mesh, no relay, not physical |
 | MESH-002 | Client → relay → gateway | Requires P3 | **NOT IMPLEMENTED** |
 | MESH-003 | Relay disconnect invalidates route | Requires P3/P6 | **NOT IMPLEMENTED** |
-| MESH-004 | Gateway disconnect → no egress | Requires P2/P6 | **NOT IMPLEMENTED** |
-| SEC-001 | Manipulated frame rejected | 17 codec tests | **PASS (codec)**; no transport yet |
-| SEC-002 | Replay rejected | Requires TLS transport | **NOT IMPLEMENTED** |
+| MESH-004 | Gateway disconnect → no egress | Gateway stopped while the P2 VPN is up | **PASS (emulator)** — `NO_ROUTE`, `Internet=FAILED`, all fetches fail, no DNS packet on the underlying network |
+| SEC-001 | Manipulated frame rejected | 17 codec tests | **PASS (codec)**; no OMSH frame on any wire yet |
+| SEC-002 | Replay rejected | Wrong token and wrong pin on a live TLS gateway | **PASS (token/pin rejection)**; the bearer token itself remains replayable until regenerated |
+| SEC-003 | Wrong gateway rejected | Client pinned to a different fingerprint | **PASS (emulator)** — `gateway certificate fingerprint mismatch` |
+| SEC-004 | Gateway cannot reach client LAN | Destination policy on the gateway, live private decoy on `10.0.2.2:8081` | **PASS (emulator)** — connection reset, `denied` counter |
 | WA-001 | Send WhatsApp text | Requires physical devices + accounts | **BLOCKED** |
 | WA-002 | Receive WhatsApp text | Requires physical devices + accounts | **BLOCKED** |
 | WA-003 | Send image | Requires physical devices + accounts | **BLOCKED** |
@@ -158,6 +165,50 @@ Evidence files:
 - `docs/evidence/p1-chrome-outside-vpn.png`
 - `docs/evidence/host-test-server-8080.log`
 - `docs/evidence/host-test-server-8081.log`
+
+### 4.6 P2 direct-gateway evidence (2026-11-17, 17:24–17:33 UTC)
+
+Two emulators: `emulator-5554` (gateway, AVD `openmesh_test`) and
+`emulator-5556` (client, AVD `vp_test`), joined by `adb forward tcp:8443
+tcp:8443` so the client dials `10.0.2.2:8443`. The gateway was started with
+`com.openmesh.debug.START_GATEWAY`, the client with `com.openmesh.debug.
+START_VPN --es mode gateway --es host 10.0.2.2 --ei port 8443 --es fingerprint
+<64 hex> --es token <gateway token>`.
+
+Observed (final artifacts, hashes in §1):
+
+```text
+Gateway:  listening on 0.0.0.0:8443 fingerprint=46676594f8054ae4f0dfc6910fbe74e1904ddf65121419eef8541627fae17ed2
+Client:   DNS example.com -> 172.66.147.243, 104.20.23.154, 2606:4700:10::6814:179a, 2606:4700:10::ac42:93f3 (1597 ms)
+Client:   HTTP http://10.0.2.2:8080/health -> 200, 206 bytes, 672 ms (through the gateway)
+Client:   HTTPS https://example.com/ -> 200, 577 bytes, TLS_AES_128_GCM_SHA256, 807 ms (nested TLS 1.3)
+Client:   HTTP http://10.0.2.2:8081/health -> denied after 575 ms (live listener, gateway policy)
+Client:   phase=TUNNEL_READY, link=UP, route=SELECTED, internet=VERIFIED,
+          gatewayId=10.0.2.2:8443, hops=1, rxBytes=29050, txBytes=11810
+          probeDetail=example.com answered HTTP 200 via gateway (TLS 1.3)
+Gateway:  accepted=31, denied=3, active=1, bytesToRemote=12556, bytesFromRemote=142613
+```
+
+Fault injections, all fail closed:
+
+```text
+Gateway stopped:      phase=NO_ROUTE, route=NONE, internet=FAILED,
+                      probeDetail=gateway unreachable or untrusted: SSLHandshakeException: connection closed
+                      every fetch fails; tcpdump on the client shows DNS queries only on tun0
+Wrong token:          probeDetail=... Socks5Exception: SOCKS5 authentication failed
+Wrong fingerprint:    probeDetail=... gateway certificate fingerprint mismatch;
+                      expected 0000...0001, got 4667...7ed2
+```
+
+What it does **not** prove: WhatsApp (never installed), physical phones,
+`arm64-v8a`, a LAN run without `adb forward`, IPv6 destinations end to end,
+relay/multi-hop/BLE/Wi-Fi Direct, hostile-network exposure of the gateway,
+mutual TLS, Keystore storage of the token, quotas or revocation. Android's
+device-local DNS cache can answer a query after the tunnel attempts fail; no
+packet was observed outside the tunnel.
+
+Full transcript, packet capture and the recorded lab-harness failure:
+`docs/evidence/p2-direct-gateway-2026-11-17.txt`.
 
 ---
 
@@ -219,13 +270,15 @@ These are **not** passing tests and must not be reported as such:
 |---|---|---|
 | WhatsApp capture and messaging | No physical phone, no WhatsApp account | 3 physical Android devices, WhatsApp accounts, isolated network |
 | Physical arm64-v8a | No device attached | At least one arm64 phone; ideally three |
-| Real 3-device mesh A → B → C | P2–P7 not implemented | Gateway, TLS transport, relay, routing |
+| P2 on a LAN without adb forward | Only two emulators on one host | Two phones on the same Wi-Fi/hotspot |
+| Real 3-device mesh A → B → C | P3–P7 not implemented | Relay, TLS transport with inner channel, routing |
 | BLE discovery | P4 not implemented | BLE-capable hardware, permissions, lifecycle tests |
 | Wi-Fi Direct | P5 not implemented | Multi-vendor hardware, concurrency tests |
-| Replay and MITM | No mesh transport | P2 threat-model tests |
+| Replay of a stolen gateway token | Bearer token has no expiry or rotation UI | Mutual TLS or signed short-lived tickets |
 | IPv6 end-to-end | Only IPv4 destinations exercised | IPv6-capable destination and gateway |
 | Long-run battery/data | No hardware | Instrumented soak tests |
-| Release APK on device | Release is unsigned and capture-only | Signing config, physical WhatsApp test plan |
+| Load/fuzz of the TLS + SOCKS gateway surface | Not yet built | Fuzzing harness, connection-drain limits, review |
+| Release APK on device | Unsigned and unvalidated; deliberately not distributed | Signing process, physical WhatsApp test plan |
 | VPN consent denial/revoke UI | Automated lab pre-granted consent | Manual device test |
 
 ---
@@ -279,6 +332,7 @@ $env:JAVA_HOME = 'C:\Program Files\Java\jdk-21'
 $sdk = "$env:LOCALAPPDATA\Android\Sdk"
 $adb = "$sdk\platform-tools\adb.exe"
 & "$sdk\emulator\emulator.exe" -avd openmesh_test -no-window -no-audio -gpu swiftshader_indirect
+& "$sdk\emulator\emulator.exe" -avd vp_test -port 5556 -no-window -no-audio -gpu swiftshader_indirect
 & $adb wait-for-device
 & $adb install -r app\build\outputs\apk\debug\app-debug.apk
 & $adb install -r testclient\build\outputs\apk\debug\testclient-debug.apk
@@ -290,8 +344,20 @@ node tools/test-server.mjs
 $env:OPENMESH_TEST_PORT='8081'; node tools/test-server.mjs
 ```
 
-Then follow sections 6.4–6.6 of the README. Exact UI coordinates are not part
-of the test: use the buttons by label so the run survives layout changes.
+Then follow README §6: P1 in 6.4, **P2 in 6.5 (two emulators)**, P0 in 6.6,
+outside-VPN check in 6.7. Exact UI coordinates are not part of the test: use
+the buttons by label so the run survives layout changes.
+
+For the packet-level no-leak check (lab only, requires a `userdebug` AVD):
+
+```powershell
+& $adb -s emulator-5556 root
+& $adb -s emulator-5556 shell "nohup tcpdump -i any -w /data/local/tmp/leak.pcap 'port 53' >/dev/null 2>&1 &"
+# run the lab client, then:
+& $adb -s emulator-5556 shell "pkill tcpdump; tcpdump -r /data/local/tmp/leak.pcap -n"
+```
+
+Every DNS query must appear on `tun0` and none on `eth0`.
 
 ---
 
@@ -301,8 +367,10 @@ of the test: use the buttons by label so the run survives layout changes.
 |---|---|---|
 | P0 | VPN activates and traffic is limited to the target package; no connectivity claim | **Met for the substitute app in the emulator**; WhatsApp/release not verified |
 | P1 | Target uses TUN → tun2socks → SOCKS5; other apps stay outside; no loops/leaks | **Met for the substitute app in the emulator**; WhatsApp not verified; direct lab egress, not a gateway |
-| P2 | A without direct Internet reaches a test destination through C | **Not met** — not implemented |
+| P2 | A without direct Internet reaches a test destination through C | **Partially met (emulator, A → C)** — authenticated TLS 1.3 gateway with honest Route/Internet and fail-closed behaviour proven; no WhatsApp, no physical phones, no LAN run, no relay |
 | P3 | Real traffic traverses B and exits C; B cannot read it | **Not met** — not implemented |
 | P7 | WhatsApp messages over A → B → C | **Not met** — blocked by hardware and missing mesh |
 
-The project is therefore at the end of P1, not at the MVP.
+The project is therefore at the end of **P2 with a single gateway hop**, not at
+the MVP. The next phase (P3 relay) stays behind the phase gate until P2 is
+validated on physical hardware with WhatsApp.

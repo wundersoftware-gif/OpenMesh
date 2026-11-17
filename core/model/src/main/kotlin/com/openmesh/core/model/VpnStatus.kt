@@ -57,7 +57,11 @@ data class VpnStatus(
     val startedAtMillis: Long? = null,
     val lastError: String? = null,
     val labDirect: Boolean = false,
+    val remoteGateway: Boolean = false,
     val engineRunning: Boolean = false,
+    /** Last rendered result of the real end-to-end gateway probe, if any. */
+    val probeDetail: String? = null,
+    val probeAtMillis: Long? = null,
 ) {
     val isActive: Boolean
         get() = phase == VpnPhase.CAPTURING ||

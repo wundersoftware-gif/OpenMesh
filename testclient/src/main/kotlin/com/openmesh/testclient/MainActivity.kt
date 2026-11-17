@@ -281,6 +281,9 @@ class MainActivity : Activity() {
 
     private fun logLine(line: String) {
         val stamped = "${timeFormat.format(Date())}  $line\n"
+        // Mirror to logcat so adb can capture reproducible evidence without a
+        // screenshot of the UI.
+        android.util.Log.i("OpenMeshLab", line)
         synchronized(log) {
             log.append(stamped)
         }

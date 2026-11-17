@@ -7,7 +7,7 @@ OpenMesh bundles or depends on the components below. Versions are pinned in
 
 ## hev-socks5-tunnel 2.20.0
 
-- **Purpose:** userspace TUN → SOCKS5 engine used by the P1 data path.
+- **Purpose:** userspace TUN → SOCKS5 engine used by the P1 and P2 data paths.
 - **License:** MIT.
 - **Copyright:** Copyright (c) 2022 hev.
 - **Artifact:** `vpn/tun2socks/libs/hev-socks5-tunnel-2.20.0.aar`
@@ -87,18 +87,23 @@ Not shipped in the APK.
 
 ---
 
-## Bouncy Castle (declared, not used yet)
+## Bouncy Castle (used for certificate generation since P2)
 
 - **Components:** `org.bouncycastle:bcprov-jdk18on:1.83`,
   `bcpkix-jdk18on:1.83`.
-- **Declared in:** `transport/build.gradle.kts` for the future TLS/identity
-  work (P2). There is no source in that module and no Bouncy Castle code is
-  currently exercised or shipped by the app.
+- **Used in:** `transport/src/main/kotlin/com/openmesh/transport/TlsIdentity.kt`
+  to **generate** the self-signed EC P-256 X.509 certificate that is the
+  gateway node identity, and to load/save it as PKCS#12. It is a standard
+  certificate builder, not cryptography of OpenMesh's own design: every byte on
+  the wire is produced by the platform TLS 1.3 implementation
+  (`javax.net.ssl`).
+- **Shipped:** yes, inside the debug and release APKs through the `transport`
+  module.
 - **License:** Bouncy Castle Licence (MIT-style).
 - **Copyright:** The Legion of the Bouncy Castle Inc.
 
-Review this dependency before P2. Remove it if the platform TLS stack is
-sufficient.
+If the platform keystore later provides certificate generation on all supported
+API levels, this dependency can be dropped (see ADR 0006, SECURITY.md §6).
 
 License: https://www.bouncycastle.org/licence.html
 

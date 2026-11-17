@@ -22,15 +22,15 @@ class LocalSocksFrontend(
     private val protector: SocketProtector,
     private val labAllowlist: Set<String>,
     private val audit: GatewayAudit,
-) : AutoCloseable {
+) : SocksFrontend {
     private var server: Socks5Server? = null
     private var credentials: Socks5Credentials? = null
     val metrics: GatewayMetrics = GatewayMetrics()
 
-    val port: Int
+    override val port: Int
         get() = server?.boundPort ?: error("local SOCKS frontend is not running")
 
-    val socksCredentials: Socks5Credentials
+    override val socksCredentials: Socks5Credentials
         get() = credentials ?: error("local SOCKS frontend is not running")
 
     fun start(): LocalSocksFrontend {

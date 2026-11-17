@@ -1,15 +1,22 @@
 # OpenMesh Protocol (OMSH) v1
 
-This document specifies the binary framing that OpenMesh uses between mesh
-nodes, plus the stream semantics that the transport must provide.
+This document specifies two things:
+
+1. the **OMSH v1 binary framing** that OpenMesh will use between mesh nodes,
+   plus the stream semantics the transport must provide (§1–§9);
+2. the **wire protocol that is actually implemented today** for the P2 direct
+   gateway path (§11): SOCKS5 inside TLS 1.3, with certificate pinning and an
+   RFC 1929 token. §11 describes working behaviour; the rest of this document
+   is a contract for later phases.
 
 > **Implementation status**
 >
 > The **frame model and codec are implemented** in `core:protocol`
 > (`MeshFrame`, `FrameType`, `FrameCodec`) and covered by 17 JVM tests.
-> **No transport, handshake, routing or stream multiplexer is implemented
-> yet.** Sections marked *planned* are the contract for P2/P3, not current
-> behaviour. Do not describe them as working features.
+> **No OMSH frame is carried on any transport yet**, and no routing or stream
+> multiplexer is implemented. The P2 data path (§11) carries SOCKS5 directly
+> inside TLS 1.3 instead. Sections marked *planned* are contracts for later
+> phases, not current behaviour. Do not describe them as working features.
 
 The key words MUST, MUST NOT, SHOULD and MAY are used in the RFC 2119 sense.
 
@@ -345,3 +352,87 @@ violates framing is refused rather than retried indefinitely.
 
 Until the transport exists, OMSH frames are a tested codec and a written
 contract, not a working network protocol.
+
+---
+
+## 11. Implemented P2 wire protocol (SOCKS5 inside TLS 1.3)
+
+This is what actually runs today, in `gateway` (`GatewayServer`,
+`client/RemoteGatewayConnector`) and `transport`. It is a **single-hop**
+protocol: client A to gateway C. No relay sees these bytes.
+
+### 11.1 Transport
+
+- TCP to the gateway's configured host and port (default `8443`).
+- TLS 1.3 exactly (`TLSv1.3`); no plaintext or downgraded mode is offered.
+- The gateway presents a self-signed EC P-256 certificate generated with
+  Bouncy Castle and persisted as PKCS#12 in app-private storage.
+- The client authenticates the gateway by comparing the SHA-256 fingerprint of
+  the presented leaf certificate with the pinned value
+  (`PinnedFingerprintTrustManager`). Hostname verification is intentionally
+  disabled; the pin is the check. A mismatch aborts the handshake before any
+  application byte is sent.
+- The gateway does **not** verify a client certificate. Client authentication
+  happens at the SOCKS layer with a bearer token (see 11.2).
+
+### 11.2 Authentication and stream framing (RFC 1929 + SOCKS5)
+
+After the handshake, both sides run standard SOCKS5 on the TLS socket:
+
+```text
+client                                   gateway
+  │  method negotiation: {0x05, 0x01, 0x02}         │  (0x02 = user/password)
+  │─────────────────────────────────────────────────►
+  │◄─────────────────────────────────────────────────  {0x05, 0x02}
+  │  {0x01, len(user), user, len(pass), pass}       │  token inside TLS
+  │─────────────────────────────────────────────────►
+  │◄─────────────────────────────────────────────────  {0x01, 0x00} or failure
+  │  {0x05, 0x01, 0x00, ATYP, addr, port}           │  CONNECT, one per destination
+  │─────────────────────────────────────────────────►
+  │◄─────────────────────────────────────────────────  {0x05, 0x00, ...}
+  │  proxied bytes, both directions, until close    │
+```
+
+- The username/password pair carries the per-gateway token generated on the
+  gateway and entered on the client out of band. It is never logged.
+- `CONNECT` only. `BIND` is rejected with `0x07`; `UDP ASSOCIATE` is not used
+  on the P2 link (UDP is not proxied).
+- Address types: IPv4 (`0x01`), IPv6 (`0x04`) and domain name (`0x03`). When a
+  domain name is used, the gateway resolves it and applies the destination
+  policy to every resolved address before connecting.
+- One TLS session per destination. There is no multiplexing and no 0-RTT.
+- The gateway applies `DestinationPolicy` on its side: private, loopback,
+  link-local, CGNAT, multicast and reserved ranges are denied (except an exact
+  `host:port` entry supplied only by the debug build), so the gateway cannot be
+  used to reach its own LAN.
+
+### 11.3 DNS on the P2 path
+
+The client does not send DNS on the local network. The client frontend resolves
+names by sending a standard DNS query over **TCP** to a fixed public resolver
+(`1.1.1.1:53`, then `9.9.9.9:53`) **inside an authenticated gateway TLS
+session**, with a 2-byte length prefix as required by RFC 1035 §4.2.2. Answers
+are parsed and returned to tun2socks; both A and AAAA queries are supported.
+Up to 4096 bytes per query; failures fail closed with no local fallback.
+
+### 11.4 Why SOCKS5 and not OMSH on this path
+
+OMSH exists for a mesh with relays: stream IDs, hop accounting and an inner
+encrypted channel that relays cannot parse. A single authenticated TLS hop to
+a trusted gateway does not need any of that, and reusing the already tested
+SOCKS5 implementation is less code and less risk. When a relay is introduced
+(P3), the OMSH frames will wrap the same SOCKS5 stream end-to-end; this
+document will be updated then.
+
+### 11.5 Failure behaviour
+
+| Event | Client-visible result |
+|---|---|
+| TCP connect refused / timeout | `NO_ROUTE` with `gateway unreachable or untrusted` |
+| Certificate fingerprint mismatch | `NO_ROUTE`, TLS handshake aborted, no SOCKS byte sent |
+| Token rejected | `NO_ROUTE` with `SOCKS5 authentication failed` |
+| Destination denied by policy | SOCKS5 failure reply, gateway `denied` counter increases |
+| Probe destination unreachable | `Route=SELECTED`, `Internet=FAILED` |
+
+All of these were exercised on the emulator pair; see
+`docs/evidence/p2-direct-gateway-2026-11-17.txt`.

@@ -1,3 +1,9 @@
 <resources>
     <string name="app_name">OpenMesh VPN</string>
+    <string name="gateway_notification_title">OpenMesh gateway</string>
+    <string name="gateway_notification_channel">Gateway status</string>
+    <string name="gateway_notification_channel_description">Shows whether this phone is acting as an OpenMesh gateway.</string>
+    <string name="gateway_notification_starting">Starting gateway…</string>
+    <string name="gateway_notification_listening">Listening on TCP %1$d · TLS 1.3 · direct exit</string>
+    <string name="gateway_notification_stop_action">Stop</string>
 </resources>

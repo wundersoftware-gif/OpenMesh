@@ -26,6 +26,7 @@ internal class UdpDnsRelay(
     private val audit: GatewayAudit,
     private val metrics: GatewayMetrics,
     private val protector: SocketProtector,
+    private val resolver: DnsResolver,
 ) : AutoCloseable {
     private val running = AtomicBoolean(false)
     private val socket = DatagramSocket(null)
@@ -89,7 +90,7 @@ internal class UdpDnsRelay(
             dropped.incrementAndGet()
             return
         }
-        val response = queryUpstream(request.payload) ?: return
+        val response = resolver.resolve(request.payload) ?: return
         val header = buildHeader(request)
         val out = header + response
         if (out.size > 65_535) return
@@ -100,33 +101,6 @@ internal class UdpDnsRelay(
         } catch (_: Exception) {
             dropped.incrementAndGet()
         }
-    }
-
-    private fun queryUpstream(query: ByteArray): ByteArray? {
-        for (upstream in config.dnsUpstreams) {
-            val upstreamSocket = DatagramSocket()
-            try {
-                protector.protect(upstreamSocket)
-                upstreamSocket.soTimeout = 5_000
-                upstreamSocket.connect(upstream)
-                upstreamSocket.send(DatagramPacket(query, query.size))
-                val response = ByteArray(config.maxUdpDnsPayload)
-                val packet = DatagramPacket(response, response.size)
-                upstreamSocket.receive(packet)
-                if (packet.length >= 12) {
-                    return response.copyOfRange(0, packet.length)
-                }
-            } catch (_: Exception) {
-                // Try the next resolver.
-            } finally {
-                try {
-                    upstreamSocket.close()
-                } catch (_: Exception) {
-                    // ignore
-                }
-            }
-        }
-        return null
     }
 
     private fun buildHeader(request: UdpRequest): ByteArray {

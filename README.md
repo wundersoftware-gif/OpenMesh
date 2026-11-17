@@ -9,25 +9,27 @@ app.
 The target application is WhatsApp Messenger (`com.whatsapp`).
 
 > **This repository does not implement the full mesh yet.**
-> P0 (per-app capture) and the P1 lab data path (TUN → tun2socks → SOCKS5) are
-> implemented and have reproducible emulator evidence. P2–P7 (remote gateway,
-> authenticated mesh transport, relay, BLE, Wi-Fi Direct, dynamic routing and
-> real WhatsApp validation) are **not implemented**. See
-> [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md).
+> P0 (per-app capture), the P1 lab data path (TUN → tun2socks → SOCKS5) and
+> **P2 (direct gateway over authenticated TLS 1.3, A → C → Internet)** are
+> implemented and have reproducible emulator evidence. P3–P7 (relay, BLE,
+> Wi-Fi Direct, dynamic routing and real WhatsApp validation) are **not
+> implemented**. See [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md).
 
 ---
 
 ## Download the lab APK
 
-The installable P0/P1 lab build and its test client are attached to the latest
+The installable P2 lab build (0.2.0-p2) and its test client are attached to the
 GitHub release:
 
-- **OpenMesh lab APK + test client:** <https://github.com/wundersoftware-gif/OpenMesh/releases/latest>
+- **OpenMesh lab APK + test client:** <https://github.com/wundersoftware-gif/OpenMesh/releases>
 
-Install both APKs to exercise the P0/P1 evidence on an Android 10+ device or
+Install both APKs to exercise the P2 evidence on an Android 10+ device or
 emulator. This is **not** a working WhatsApp mesh VPN: the debug APK captures
-only `com.openmesh.testclient`, and the release build is capture-only. Read the
-status below and [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md) before
+only `com.openmesh.testclient`, there is no relay, and all runtime evidence
+comes from emulators on one host. The release APK targets `com.whatsapp` but is
+unsigned and unvalidated, so it is not attached to the release. Read the status
+below and [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md) before
 installing.
 
 ---
@@ -38,7 +40,7 @@ installing.
 |---|---|---|---|
 | P0 | Gradle skeleton, VPN consent, TUN, per-app allowlist, capture-only fail-closed, UI state/logs | **Implemented and validated in emulator with a substitute app** | [`docs/evidence/p0-failclosed-2026-11-17.txt`](docs/evidence/p0-failclosed-2026-11-17.txt) |
 | P1 | hev-socks5-tunnel, loopback SOCKS5, TCP + DNS-only UDP, lab egress, no leaks/loops | **Implemented and validated in emulator with a substitute app** | [`docs/evidence/p1-testclient-2026-11-17.txt`](docs/evidence/p1-testclient-2026-11-17.txt) |
-| P2 | Authenticated remote gateway over TLS | **Not implemented** | — |
+| P2 | Authenticated remote gateway over TLS 1.3 (A → C → Internet, no relay) | **Implemented and validated emulator-to-emulator with a substitute app** | [`docs/evidence/p2-direct-gateway-2026-11-17.txt`](docs/evidence/p2-direct-gateway-2026-11-17.txt) |
 | P3 | Opaque relay / multi-hop | **Not implemented** | — |
 | P4 | BLE discovery | **Not implemented** | — |
 | P5 | Wi-Fi Direct transport | **Not implemented** | — |
@@ -56,23 +58,31 @@ What is real today:
   direct socket`, with a random per-session RFC 1929 credential, a destination
   policy that blocks private/loopback/link-local/CGNAT/multicast addresses, and
   DNS-only UDP.
-- A strict, bounded binary frame codec (`OMSH` v1) and a restricted SOCKS5
-  server with unit and socket-level tests.
-- A Compose UI that never presents a link or an engine as "Internet connected".
+- **A remote gateway over TLS 1.3**: the gateway proves a self-signed EC P-256
+  identity pinned by SHA-256 fingerprint, authenticates the client with an
+  RFC 1929 token inside TLS, serves SOCKS5 CONNECT, sends DNS as DNS-over-TCP
+  to `1.1.1.1`/`9.9.9.9` through the gateway, and the client only reports
+  `Route=SELECTED` / `Internet=VERIFIED` after a real probe
+  (`example.com:443`, nested TLS 1.3, HTTP HEAD 2xx/3xx).
+- A restricted SOCKS5 server with an exact-match destination policy, a strict,
+  bounded binary frame codec (`OMSH` v1), socket-level unit tests and TLS
+  gateway tests.
+- A Compose UI that never presents a link or an engine as "Internet connected",
+  and that fails closed (route NONE, Internet FAILED) when the gateway is
+  missing, unpinned or wrongly authenticated.
 
 What is **not** real today:
 
-- There is no mesh transport, no TLS node authentication, no relay and no
-  multi-hop path.
-- There is no remote gateway listener. The SOCKS5 server is currently used only
-  on loopback in debug lab mode.
-- The release build captures `com.whatsapp` but has no gateway, so it is
-  **capture-only and intentionally drops WhatsApp traffic**. It is not usable
-  for messaging yet.
+- There is **no relay node B and no multi-hop path**. P2 is a single gateway
+  hop: A dials C directly over TLS and C exits to the Internet.
+- There is no mesh discovery (BLE, Wi-Fi Direct) and no dynamic routing.
 - No test has ever run against WhatsApp itself, on a physical phone, or on
-  `arm64-v8a`. The runtime evidence is from an x86_64 Android 16 emulator with a
-  bundled test client. This substitution is explicit in the UI and in
+  `arm64-v8a`. The runtime evidence is from two x86_64 Android 16 emulators on
+  one host with a bundled test client and an `adb forward`. This substitution is
+  explicit in the UI and in
   [`docs/ADR/0003-debug-target-and-lab-socks.md`](docs/ADR/0003-debug-target-and-lab-socks.md).
+- There is no mutual TLS, no Android Keystore protection for the token, no
+  quota/revocation UI and no release signing.
 
 The final MVP acceptance criterion from `GOAL_PROMPT.md` — real WhatsApp
 messages travelling A → B → C → Internet with A offline — is therefore **not
@@ -115,8 +125,8 @@ evading captive portals, Wi-Fi authentication or access controls.
 ├── vpn/
 │   ├── android/            VpnService, TUN, capture engine, lab frontend
 │   └── tun2socks/          Pinned hev-socks5-tunnel AAR + JNI wrapper
-├── gateway/                Restricted SOCKS5 server, DNS relay, policy, tests
-├── transport/              Placeholder module (future TLS transport)
+├── gateway/                Restricted SOCKS5 server, DNS relay, policy, TLS gateway, tests
+├── transport/              TLS 1.3 contexts, node identity, fingerprint pinning
 ├── relay/                  Placeholder module (P3)
 ├── discovery/ble/          Placeholder module (P4)
 ├── tools/test-server.mjs   Host HTTP test server for P1 evidence
@@ -170,7 +180,8 @@ $env:JAVA_HOME = 'C:\Program Files\Java\jdk-21'
 # Debug app (captures com.openmesh.testclient) and the lab client
 .\gradlew.bat :app:assembleDebug :testclient:assembleDebug
 
-# Unit tests (35 tests: frame codec, destination policy, SOCKS5 server, config)
+# Unit tests (45 tests: frame codec, destination policy, SOCKS5 server,
+# tun2socks config, TLS loopback, TLS gateway + pinned client)
 .\gradlew.bat test
 
 # Release APK (captures com.whatsapp; unsigned, capture-only)
@@ -190,8 +201,8 @@ the build starts.
 
 | Variant | Application ID | Captured package | Data path |
 |---|---|---|---|
-| `debug` | `com.openmesh.app.debug` | `com.openmesh.testclient` | Lab direct SOCKS if enabled, otherwise capture-only |
-| `release` | `com.openmesh.app` | `com.whatsapp` | Capture-only (no gateway yet) |
+| `debug` | `com.openmesh.app.debug` | `com.openmesh.testclient` | Direct gateway (P2), lab direct SOCKS (P1) or capture-only (P0); plus the gateway service and the debug control receiver |
+| `release` | `com.openmesh.app` | `com.whatsapp` | Direct gateway (P2) if configured, otherwise capture-only. Unsigned and unvalidated |
 
 The debug substitution exists because the emulator has no WhatsApp account and
 because validating a VPN path must not require automating WhatsApp. It proves
@@ -200,7 +211,7 @@ the target card.
 
 ---
 
-## 6. Run P0/P1 on an emulator
+## 6. Run P0/P1/P2 on an emulator
 
 These are the exact steps used for the evidence in `docs/evidence/`.
 
@@ -271,10 +282,69 @@ The emulator reaches the host as `10.0.2.2`.
    - `Route` stays `NONE` and `Internet` stays `UNKNOWN` — this is a lab path,
      not a gateway.
 
-### 6.5 P0 fail-closed run
+### 6.5 P2 direct-gateway run (two emulators)
+
+P2 needs one emulator to be the gateway and another to be the client. The
+evidence used `emulator-5554` (gateway, AVD `openmesh_test`) and `emulator-5556`
+(client, AVD `vp_test`), with an `adb forward` standing in for a LAN.
+
+```powershell
+& "$sdk\emulator\emulator.exe" -avd vp_test -port 5556 -no-window -no-audio `
+    -gpu swiftshader_indirect
+& $adb -s emulator-5554 forward tcp:8443 tcp:8443
+```
+
+1. On the gateway emulator, start the gateway (UI card **Gateway (this phone)**
+   → **Start gateway**, or for unattended runs):
+
+   ```powershell
+   & $adb -s emulator-5554 shell am broadcast -a com.openmesh.debug.START_GATEWAY `
+     --ei port 8443 -n com.openmesh.app.debug/com.openmesh.app.DebugControlReceiver
+   & $adb -s emulator-5554 logcat -d -s OpenMeshGateway
+   # gateway listening on 0.0.0.0:8443 fingerprint=...
+   ```
+
+2. On the client emulator, grant the VPN consent, then start the VPN in gateway
+   mode with the fingerprint and the token from the gateway UI:
+
+   ```powershell
+   & $adb -s emulator-5556 shell appops set com.openmesh.app.debug ACTIVATE_VPN allow
+   & $adb -s emulator-5556 shell am broadcast -a com.openmesh.debug.START_VPN `
+     --es mode gateway --es host 10.0.2.2 --ei port 8443 `
+     --es fingerprint <64 hex> --es token <gateway token> `
+     -n com.openmesh.app.debug/com.openmesh.app.DebugControlReceiver
+   ```
+
+   The gateway token is readable in the lab with
+   `adb -s emulator-5554 shell run-as com.openmesh.app.debug cat shared_prefs/openmesh_gateway.xml`.
+   On real phones it is copied out of band; the adb route is a lab shortcut
+   only.
+
+3. Run the test client on the client emulator and confirm in the OpenMesh UI:
+   `Link: UP`, `Route: SELECTED`, `Internet: VERIFIED`, `gatewayId=10.0.2.2:8443`,
+   `hops=1`.
+
+Expected result (see
+[`docs/evidence/p2-direct-gateway-2026-11-17.txt`](docs/evidence/p2-direct-gateway-2026-11-17.txt)):
+
+- DNS for `example.com` resolves (DNS-over-TCP through the gateway).
+- `http://10.0.2.2:8080/health` → HTTP 200.
+- `https://example.com/` → HTTP 200 with `TLS_AES_128_GCM_SHA256` (a nested TLS
+  1.3 session inside the gateway TLS session).
+- `http://10.0.2.2:8081/health` is denied by the gateway destination policy.
+
+Negative runs, all fail closed:
+
+| Fault | Observed |
+|---|---|
+| Gateway stopped | `Route=NONE`, `Internet=FAILED`, `gateway unreachable`, every fetch fails |
+| Wrong token | `Socks5Exception: SOCKS5 authentication failed`, gateway `denied` counter increases |
+| Wrong fingerprint | `gateway certificate fingerprint mismatch; expected ...0001, got 4667...7ed2` |
+
+### 6.6 P0 fail-closed run
 
 1. Stop the VPN.
-2. Turn **Lab direct SOCKS (P1)** off.
+2. Select **Capture only (P0)**.
 3. Tap **Start capture-only VPN (P0)**.
 4. Run the test client again.
 5. Expected result:
@@ -284,13 +354,13 @@ The emulator reaches the host as `10.0.2.2`.
    - Neither host listener receives a request.
    - OpenMesh shows `Capturing · fail-closed`, TX > 0 and **RX = 0**.
 
-### 6.6 Chrome outside the VPN
+### 6.7 Chrome outside the VPN
 
 While the VPN is active, open Chrome and browse to `https://example.org/`.
 Chrome is not in the allowlist and must keep normal connectivity. This was
 verified; see `docs/evidence/p1-chrome-outside-vpn.png`.
 
-### 6.7 Stop and reset
+### 6.8 Stop and reset
 
 Tap **Stop VPN**. The TUN disappears, Link becomes `DOWN`, Route `NONE`,
 Internet `UNKNOWN`, and all session counters return to zero. The foreground
@@ -300,14 +370,18 @@ notification is removed.
 
 ## 7. Safety notes
 
-- The release build is **not usable for real WhatsApp traffic yet**. With no
-  gateway, capture-only mode drops everything WhatsApp sends. Do not install it
-  expecting messages to work.
+- The release build is **not usable for real WhatsApp traffic yet**. It targets
+  `com.whatsapp`, but without a configured gateway it is capture-only and drops
+  everything WhatsApp sends. Do not install it expecting messages to work.
 - The debug build captures only `com.openmesh.testclient`; it does not and
   cannot capture WhatsApp.
-- Do not expose the SOCKS5 server to a LAN or the Internet. It is restricted,
-  authenticated and policy-checked, but it is still a proxy: the production
-  design binds it to the authenticated mesh transport, not to a public port.
+- The P2 gateway listens on `0.0.0.0:8443`. It requires TLS 1.3 with a pinned
+  certificate and a per-gateway token, and it applies the destination policy,
+  but it is **not hardened against a hostile network**: no mutual TLS, no
+  quotas, no revocation, no fuzzing. Expose it only on a network you trust,
+  and stop it when you do not need it.
+- The gateway token and the gateway private key are stored as app-private data
+  (SharedPreferences and a PKCS#12 file), not in the Android Keystore.
 - Do not add a lab allowlist entry to a release build. The debug allowlist is
   exactly `10.0.2.2:8080`.
 - OpenMesh logs metadata only. It must never log message content, contacts,

@@ -20,6 +20,8 @@ import com.openmesh.core.model.OpenMeshException
 import com.openmesh.core.model.RouteState
 import com.openmesh.core.model.VpnPhase
 import com.openmesh.gateway.NoopGatewayAudit
+import com.openmesh.gateway.client.GatewayEndpoint
+import com.openmesh.gateway.client.RemoteGatewayConnector
 import com.openmesh.gateway.socks5.SocketProtector
 import com.openmesh.vpn.tun2socks.Tun2SocksConfig
 import com.openmesh.vpn.tun2socks.Tun2SocksEngine
@@ -53,8 +55,9 @@ class OpenMeshVpnService : VpnService(), SocketProtector {
     private var tun: ParcelFileDescriptor? = null
     private var tun2socks: Tun2SocksEngine? = null
     private var capture: CaptureOnlyEngine? = null
-    private var frontend: LocalSocksFrontend? = null
+    private var frontend: SocksFrontend? = null
     private var monitor: Job? = null
+    private var gatewayMonitor: Job? = null
     private var foregroundStarted = false
 
     @Volatile
@@ -100,6 +103,7 @@ class OpenMeshVpnService : VpnService(), SocketProtector {
                 phase = VpnPhase.CONNECTING,
                 targetPackage = target,
                 labDirect = options.labDirectSocks,
+                remoteGateway = options.remoteGateway,
                 lastError = null,
                 link = LinkState.DOWN,
                 route = RouteState.NONE,
@@ -111,6 +115,9 @@ class OpenMeshVpnService : VpnService(), SocketProtector {
                 rxPackets = 0,
                 txPackets = 0,
                 engineRunning = false,
+                internet = InternetState.UNKNOWN,
+                probeDetail = null,
+                probeAtMillis = null,
             )
         }
 
@@ -122,16 +129,41 @@ class OpenMeshVpnService : VpnService(), SocketProtector {
             throw OpenMeshException.VpnPermissionMissing()
         }
 
-        var localFrontend: LocalSocksFrontend? = null
+        val gatewayEndpoint = options.gatewayEndpoint()
+        val gatewayConfigured = !options.gatewayHost.isNullOrBlank() ||
+            !options.gatewayFingerprint.isNullOrBlank() ||
+            !options.gatewayToken.isNullOrBlank()
+        if (gatewayConfigured && gatewayEndpoint == null) {
+            throw OpenMeshException.TransportFailure(
+                "incomplete gateway configuration: host, fingerprint and token are all required",
+            )
+        }
+        if (options.labDirectSocks && gatewayEndpoint != null) {
+            throw OpenMeshException.TransportFailure(
+                "lab direct SOCKS and a remote gateway cannot be enabled together",
+            )
+        }
+
+        var activeFrontend: SocksFrontend? = null
         var established: ParcelFileDescriptor? = null
         var engine: Tun2SocksEngine? = null
         var captureEngine: CaptureOnlyEngine? = null
         try {
             if (options.labDirectSocks) {
-                localFrontend = try {
+                activeFrontend = try {
                     LocalSocksFrontend(
                         protector = this,
                         labAllowlist = options.labAllowlist,
+                        audit = NoopGatewayAudit,
+                    ).start()
+                } catch (e: Exception) {
+                    throw OpenMeshException.LocalProxyStartFailed(describe(e))
+                }
+            } else if (gatewayEndpoint != null) {
+                activeFrontend = try {
+                    RemoteSocksFrontend(
+                        protector = this,
+                        endpoint = gatewayEndpoint,
                         audit = NoopGatewayAudit,
                     ).start()
                 } catch (e: Exception) {
@@ -169,11 +201,11 @@ class OpenMeshVpnService : VpnService(), SocketProtector {
                 throw OpenMeshException.VpnEstablishFailed(describe(e))
             } ?: throw OpenMeshException.AnotherVpnActive()
 
-            if (localFrontend != null) {
+            if (activeFrontend != null) {
                 val config = Tun2SocksConfig(
-                    socksPort = localFrontend.port,
-                    socksUsername = localFrontend.socksCredentials.username,
-                    socksPassword = localFrontend.socksCredentials.password,
+                    socksPort = activeFrontend.port,
+                    socksUsername = activeFrontend.socksCredentials.username,
+                    socksPassword = activeFrontend.socksCredentials.password,
                     mtu = MTU,
                     ipv4 = TUN_IPV4,
                     ipv6 = TUN_IPV6,
@@ -214,7 +246,7 @@ class OpenMeshVpnService : VpnService(), SocketProtector {
                 tun = established
                 tun2socks = engine
                 capture = captureEngine
-                frontend = localFrontend
+                frontend = activeFrontend
                 active = true
             }
 
@@ -222,14 +254,26 @@ class OpenMeshVpnService : VpnService(), SocketProtector {
             if (engine != null) {
                 VpnStateStore.update {
                     it.copy(
-                        phase = VpnPhase.TUNNEL_READY,
+                        // A remote tunnel is not "ready" in the routing sense
+                        // until the gateway probe succeeds. NO_ROUTE still
+                        // means the link is up and fails closed.
+                        phase = if (gatewayEndpoint != null) {
+                            VpnPhase.NO_ROUTE
+                        } else {
+                            VpnPhase.TUNNEL_READY
+                        },
                         link = LinkState.UP,
                         engineRunning = true,
                         startedAtMillis = now,
                     )
                 }
                 startStatsMonitor(engine)
-                updateNotification(getString(R.string.openmesh_notification_tunnel_ready))
+                if (gatewayEndpoint != null) {
+                    startGatewayMonitor(gatewayEndpoint)
+                    updateNotification(getString(R.string.openmesh_notification_probing))
+                } else {
+                    updateNotification(getString(R.string.openmesh_notification_tunnel_ready))
+                }
             } else {
                 VpnStateStore.update {
                     it.copy(
@@ -244,7 +288,7 @@ class OpenMeshVpnService : VpnService(), SocketProtector {
         } catch (e: Throwable) {
             captureEngine?.stop()
             engine?.stop()
-            localFrontend?.close()
+            activeFrontend?.close()
             try {
                 established?.close()
             } catch (_: Exception) {
@@ -276,12 +320,63 @@ class OpenMeshVpnService : VpnService(), SocketProtector {
         }
     }
 
+    /**
+     * Re-probes the gateway instead of trusting a configuration value. Route
+     * and Internet in the UI are only ever updated from a real connection
+     * through the gateway.
+     */
+    private fun startGatewayMonitor(endpoint: GatewayEndpoint) {
+        gatewayMonitor = scope.launch {
+            val probe = RemoteGatewayProbe(
+                RemoteGatewayConnector(endpoint = endpoint, protector = this@OpenMeshVpnService),
+            )
+            var lastNotification: String? = null
+            while (isActive && active) {
+                val outcome = probe.run()
+                if (!active) break
+                VpnStateStore.update {
+                    it.copy(
+                        phase = if (outcome.route == RouteState.SELECTED) {
+                            VpnPhase.TUNNEL_READY
+                        } else {
+                            VpnPhase.NO_ROUTE
+                        },
+                        route = outcome.route,
+                        internet = outcome.internet,
+                        gatewayId = if (outcome.route == RouteState.SELECTED) {
+                            "${endpoint.host}:${endpoint.port}"
+                        } else {
+                            null
+                        },
+                        hops = if (outcome.route == RouteState.SELECTED) 1 else null,
+                        probeDetail = outcome.detail,
+                        probeAtMillis = System.currentTimeMillis(),
+                    )
+                }
+                val text = when {
+                    outcome.internet == InternetState.VERIFIED ->
+                        getString(R.string.openmesh_notification_gateway_ok)
+                    outcome.route == RouteState.SELECTED ->
+                        getString(R.string.openmesh_notification_gateway_no_internet)
+                    else -> getString(R.string.openmesh_notification_no_route)
+                }
+                if (text != lastNotification) {
+                    updateNotification(text)
+                    lastNotification = text
+                }
+                delay(GATEWAY_PROBE_INTERVAL_MILLIS)
+            }
+        }
+    }
+
     private fun stopTunnel(reason: String?, phase: VpnPhase) {
         synchronized(lock) {
             val wasActive = active
             active = false
             monitor?.cancel()
             monitor = null
+            gatewayMonitor?.cancel()
+            gatewayMonitor = null
             capture?.stop()
             capture = null
             tun2socks?.stop()
@@ -308,6 +403,10 @@ class OpenMeshVpnService : VpnService(), SocketProtector {
                     txPackets = 0,
                     startedAtMillis = null,
                     lastError = reason,
+                    gatewayId = null,
+                    hops = null,
+                    probeDetail = null,
+                    probeAtMillis = null,
                 )
             }
             if (wasActive) {
@@ -435,6 +534,7 @@ class OpenMeshVpnService : VpnService(), SocketProtector {
         private const val NOTIFICATION_CHANNEL_ID = "openmesh_vpn_status"
         private const val NOTIFICATION_ID = 1001
         private const val STATS_INTERVAL_MILLIS = 1_000L
+        private const val GATEWAY_PROBE_INTERVAL_MILLIS = 30_000L
 
         fun start(context: Context) {
             val intent = Intent(context, OpenMeshVpnService::class.java).setAction(ACTION_START)
