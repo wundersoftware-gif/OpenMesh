@@ -1,5 +1,12 @@
 OpenMesh **0.2.0-p2** — direct gateway over TLS 1.3 (lab build).
 
+> **Update 2026-11-18:** after this release was published, P2 was validated on
+> a physical Redmi 13C (HyperOS 2.0 / Android 15, `arm64-v8a`) in each role — as
+> the client, and as a gateway reached by an emulator over real Wi-Fi. The APK
+> hashes below are unchanged. See
+> `docs/evidence/p2-physical-hardware-2026-11-18.txt`. Two physical phones in
+> one run and WhatsApp remain untested.
+
 This release adds the **P2 data path**: a phone can tunnel one allowlisted app
 through another phone that acts as a gateway, over an authenticated TLS 1.3
 session. This is a **single gateway hop (A → C → Internet)** — there is no
@@ -30,8 +37,9 @@ Full transcript: `docs/evidence/p2-direct-gateway-2026-11-17.txt`.
   release-targeting APK (`com.whatsapp`) is unsigned and **deliberately not
   attached**: it has never been run, and WhatsApp traffic on a phone without a
   configured gateway is dropped fail-closed.
-- **No physical-phone or arm64 validation.** Everything here is two x86_64
-  emulators on one host.
+- **At release time: no physical-phone or arm64 validation.** The released
+  evidence was two x86_64 emulators on one host; the physical run came after
+  publication (see the update note above).
 - **No signing.** These are debug-signed APKs, for lab use only.
 - No mutual TLS, no Android Keystore storage for the gateway token, no quotas,
   no revocation UI, no fuzzing of the gateway listener.

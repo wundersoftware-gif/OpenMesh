@@ -79,15 +79,28 @@ implemented.
 - Fail-closed: gateway stopped, wrong token, wrong fingerprint — all
   `NO_ROUTE` with a visible reason and no leaked traffic.
 - Gateway identity persists across a restart (same fingerprint, no re-pinning).
+- **Physical arm64 phone (2026-11-18), Redmi 13C, HyperOS 2.0 / Android 15:**
+  - Phone as client against the emulator gateway: DNS 303 ms, HTTP 200 (206 B,
+    105 ms), HTTPS 200 (577 B, `TLS_AES_128_GCM_SHA256`, 553 ms), decoy denied,
+    `Route=SELECTED`, `Internet=VERIFIED`, `hops=1`.
+  - Same phone with its Wi-Fi uplink up and the gateway stopped: `NO_ROUTE`,
+    every fetch fails — fail-closed on hardware, not only in the emulator.
+  - Phone as gateway, reached by the emulator over real Wi-Fi
+    (`192.168.1.58:8443`, no adb forwarding): DNS 310 ms, HTTPS 200 (577 B,
+    1265 ms), decoy denied, gateway `accepted=7, denied=4`, identity persisted
+    across a restart.
 - `:app:assembleDebug` and `:testclient:assembleDebug` succeed.
 
 ### Not implemented / not validated
 
 - No relay (B), no multi-hop, no BLE, no Wi-Fi Direct, no routing.
-- Not run on physical phones, not run on `arm64-v8a`, not run against WhatsApp;
-  the emulator has no WhatsApp account and no physical device was available.
-- The transport between the two emulators used `adb forward`; a LAN run is
-  still required.
+- Not run against WhatsApp: no WhatsApp account exists on the test devices.
+- Physical runs use **one real phone at a time** (phone client + emulator
+  gateway, or phone gateway + emulator client over real Wi-Fi). Two physical
+  phones in the same run remain pending.
+- The phone-as-client run used `adb reverse` as the lab transport; the
+  phone-as-gateway run used real Wi-Fi with no forwarding. A two-phone LAN run
+  is still required.
 - No mutual TLS, no Android Keystore storage for token/key, no quotas, no
   revocation UI, no fuzzing of the TLS/SOCKS surface, no IPv6 end-to-end.
 - No release signing; the release APK remains unsigned and is not distributed.

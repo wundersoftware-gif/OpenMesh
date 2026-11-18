@@ -11,9 +11,11 @@ The target application is WhatsApp Messenger (`com.whatsapp`).
 > **This repository does not implement the full mesh yet.**
 > P0 (per-app capture), the P1 lab data path (TUN → tun2socks → SOCKS5) and
 > **P2 (direct gateway over authenticated TLS 1.3, A → C → Internet)** are
-> implemented and have reproducible emulator evidence. P3–P7 (relay, BLE,
-> Wi-Fi Direct, dynamic routing and real WhatsApp validation) are **not
-> implemented**. See [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md).
+> implemented. P2 has reproducible emulator evidence **and** a physical
+> `arm64-v8a` Android 15 phone run in each role (client and gateway, one real
+> phone at a time). P3–P7 (relay, BLE, Wi-Fi Direct, dynamic routing and real
+> WhatsApp validation) are **not implemented**. See
+> [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md).
 
 ---
 
@@ -26,11 +28,11 @@ attached to the GitHub release:
 
 Install both APKs to exercise the P2 evidence on an Android 10+ device or
 emulator. This is **not** a working WhatsApp mesh VPN: the debug APK captures
-only `com.openmesh.testclient`, there is no relay, and all runtime evidence
-comes from emulators on one host. The release APK targets `com.whatsapp` but is
-unsigned and unvalidated, so it is not attached to the release. Read the status
-below and [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md) before
-installing.
+only `com.openmesh.testclient`, there is no relay, and the physical evidence
+uses one real phone at a time with an emulator at the other end. The release APK
+targets `com.whatsapp` but is unsigned and unvalidated, so it is not attached to
+the release. Read the status below and
+[`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md) before installing.
 
 ---
 
@@ -40,12 +42,12 @@ installing.
 |---|---|---|---|
 | P0 | Gradle skeleton, VPN consent, TUN, per-app allowlist, capture-only fail-closed, UI state/logs | **Implemented and validated in emulator with a substitute app** | [`docs/evidence/p0-failclosed-2026-11-17.txt`](docs/evidence/p0-failclosed-2026-11-17.txt) |
 | P1 | hev-socks5-tunnel, loopback SOCKS5, TCP + DNS-only UDP, lab egress, no leaks/loops | **Implemented and validated in emulator with a substitute app** | [`docs/evidence/p1-testclient-2026-11-17.txt`](docs/evidence/p1-testclient-2026-11-17.txt) |
-| P2 | Authenticated remote gateway over TLS 1.3 (A → C → Internet, no relay) | **Implemented and validated emulator-to-emulator with a substitute app** | [`docs/evidence/p2-direct-gateway-2026-11-17.txt`](docs/evidence/p2-direct-gateway-2026-11-17.txt) |
+| P2 | Authenticated remote gateway over TLS 1.3 (A → C → Internet, no relay) | **Implemented and validated emulator-to-emulator and on a physical arm64 phone in each role, with a substitute app** | [`docs/evidence/p2-direct-gateway-2026-11-17.txt`](docs/evidence/p2-direct-gateway-2026-11-17.txt), [`docs/evidence/p2-physical-hardware-2026-11-18.txt`](docs/evidence/p2-physical-hardware-2026-11-18.txt) |
 | P3 | Opaque relay / multi-hop | **Not implemented** | — |
 | P4 | BLE discovery | **Not implemented** | — |
 | P5 | Wi-Fi Direct transport | **Not implemented** | — |
 | P6 | Dynamic routing | **Not implemented** | — |
-| P7 | Real WhatsApp over A → B → C | **Not run** | Blocked: no physical devices and no WhatsApp account in the emulator |
+| P7 | Real WhatsApp over A → B → C | **Not run** | Blocked: only one physical phone, and no WhatsApp account on the test devices |
 
 What is real today:
 
@@ -76,9 +78,12 @@ What is **not** real today:
 - There is **no relay node B and no multi-hop path**. P2 is a single gateway
   hop: A dials C directly over TLS and C exits to the Internet.
 - There is no mesh discovery (BLE, Wi-Fi Direct) and no dynamic routing.
-- No test has ever run against WhatsApp itself, on a physical phone, or on
-  `arm64-v8a`. The runtime evidence is from two x86_64 Android 16 emulators on
-  one host with a bundled test client and an `adb forward`. This substitution is
+- No test has ever run against WhatsApp itself, and no run has used **two**
+  physical phones. P2 has been exercised on a real Redmi 13C (HyperOS 2.0,
+  Android 15, `arm64-v8a`) in each role: as the client against an emulator
+  gateway, and as the gateway reached by an emulator client over real Wi-Fi.
+  The rest of the runtime evidence is two x86_64 Android 16 emulators on one
+  host with a bundled test client and an `adb forward`. The app substitution is
   explicit in the UI and in
   [`docs/ADR/0003-debug-target-and-lab-socks.md`](docs/ADR/0003-debug-target-and-lab-socks.md).
 - There is no mutual TLS, no Android Keystore protection for the token, no
@@ -340,6 +345,37 @@ Negative runs, all fail closed:
 | Gateway stopped | `Route=NONE`, `Internet=FAILED`, `gateway unreachable`, every fetch fails |
 | Wrong token | `Socks5Exception: SOCKS5 authentication failed`, gateway `denied` counter increases |
 | Wrong fingerprint | `gateway certificate fingerprint mismatch; expected ...0001, got 4667...7ed2` |
+
+#### 6.5.1 Physical-phone variant (validated 2026-11-18)
+
+The same APKs run on a real phone. Two topologies were tested on a Redmi 13C
+(HyperOS 2.0, Android 15, `arm64-v8a`), one physical endpoint at a time:
+
+**Phone as client, emulator as gateway.** The phone reaches the emulator
+gateway through `adb reverse tcp:8443 tcp:8443` while the emulator exposes it
+with `adb forward tcp:8443 tcp:8443`. Start the phone VPN with
+`--es host 127.0.0.1`. The phone keeps its own Wi-Fi uplink during the run, so
+the fail-closed test (stop the gateway) proves that the captured app gets no
+direct egress even when the phone could reach the Internet.
+
+**Phone as gateway, emulator as client (real Wi-Fi).** Start the gateway on the
+phone, read its fingerprint and token, then configure the emulator VPN with
+`--es host <phone-LAN-IP> --ei port 8443`. No `adb forward` or `adb reverse` is
+involved. In this topology `http://10.0.2.2:8080/health` cannot work: that
+address is the emulator's host alias, not a destination the phone's network can
+reach. DNS, `https://example.com/` and the policy deny still apply.
+
+Lab pitfalls, both observed:
+
+- On Xiaomi/HyperOS, `adb shell input` is blocked unless "USB debugging
+  (Security settings)" is enabled; wake/unlock the phone by hand for
+  screenshots.
+- `adb reverse tcp:8443` occupies port 8443 on the phone. Remove it
+  (`adb reverse --remove-all`) before starting the phone's gateway, or the
+  gateway will correctly report `bind failed: EADDRINUSE`.
+
+Full logs:
+[`docs/evidence/p2-physical-hardware-2026-11-18.txt`](docs/evidence/p2-physical-hardware-2026-11-18.txt).
 
 ### 6.6 P0 fail-closed run
 

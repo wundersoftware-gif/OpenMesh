@@ -69,8 +69,9 @@ A (client) ── TCP + TLS 1.3 (pinned certificate + token) ── C (gateway) 
 ## Consequences
 
 - P2 gives real, reproducible evidence: A → C → Internet over authenticated
-  TLS 1.3 in an emulator pair, with fail-closed behaviour proven in three
-  separate fault injections.
+  TLS 1.3 in an emulator pair and on a physical arm64 phone in each role, with
+  fail-closed behaviour proven in three separate fault injections on the
+  emulator and again on the physical client with its own Wi-Fi uplink up.
 - The gateway is exposed on `0.0.0.0:8443` by design. It is protected by TLS +
   pin + token + destination policy, but it has **not** been fuzzed or exposed to
   a hostile network. This is a documented residual risk, not a claim of safety.
@@ -81,8 +82,10 @@ A (client) ── TCP + TLS 1.3 (pinned certificate + token) ── C (gateway) 
   end-to-end inner channel before any relay ships.
 - No OMSH code runs on the wire yet; `core:protocol` remains a tested codec and
   a contract.
-- Physical phones, LAN runs and WhatsApp remain unvalidated; the evidence is
-  two x86_64 emulators on one host with an `adb forward`.
+- One physical arm64 phone has been validated in each role (client and gateway,
+  the latter over real Wi-Fi), but never two physical phones in one run, and
+  never with WhatsApp. The rest of the evidence is two x86_64 emulators on one
+  host with an `adb forward`.
 
 ## Verification
 
@@ -93,7 +96,14 @@ A (client) ── TCP + TLS 1.3 (pinned certificate + token) ── C (gateway) 
 - Emulator evidence, `docs/evidence/p2-direct-gateway-2026-11-17.txt`:
   positive run (DNS 1146 ms, HTTP 200/206 B, HTTPS 200/577 B with
   `TLS_AES_128_GCM_SHA256`, decoy denied), gateway-down fail-closed, wrong
-  token, wrong fingerprint, identity persistence across a gateway restart.
+  token, wrong fingerprint, identity persistence across a gateway restart, and
+  a packet capture proving no DNS leaves the device outside the tunnel.
+- Physical evidence, `docs/evidence/p2-physical-hardware-2026-11-18.txt`: a
+  Redmi 13C (Android 15, `arm64-v8a`) as client (HTTP 200 in 105 ms, HTTPS 200
+  in 553 ms, fail-closed with its Wi-Fi uplink still up) and as gateway reached
+  by an emulator over real Wi-Fi at `192.168.1.58:8443` (HTTPS 200 in 1265 ms,
+  counters, identity persistence). The two endpoints have never both been
+  physical phones; that remains the next gate.
 
 ## References
 

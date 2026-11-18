@@ -434,5 +434,8 @@ document will be updated then.
 | Destination denied by policy | SOCKS5 failure reply, gateway `denied` counter increases |
 | Probe destination unreachable | `Route=SELECTED`, `Internet=FAILED` |
 
-All of these were exercised on the emulator pair; see
-`docs/evidence/p2-direct-gateway-2026-11-17.txt`.
+All of these were exercised on the emulator pair, and the unreachable,
+fingerprint-mismatch and denied-destination cases were also reproduced with a
+physical Redmi 13C in each role. See
+`docs/evidence/p2-direct-gateway-2026-11-17.txt` and
+`docs/evidence/p2-physical-hardware-2026-11-18.txt`.

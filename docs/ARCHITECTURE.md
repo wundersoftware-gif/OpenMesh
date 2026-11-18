@@ -324,7 +324,11 @@ What this path does **not** prove:
 - that a relay B exists — P2 is a single hop A → C;
 - that the gateway is safe to expose to a hostile network (no mutual TLS, no
   quotas, no revocation, no fuzzing);
-- physical `arm64-v8a` behaviour, or a LAN run without `adb forward`;
+- two physical phones in one run: one physical `arm64-v8a` phone has been
+  validated in each role (as client, and as a gateway reached over real Wi-Fi),
+  but the other endpoint was always an emulator;
+- a client phone with no Internet at all (the physical client kept its Wi-Fi
+  uplink during the fail-closed run);
 - IPv6 egress (IPv6 DNS answers are returned, but only IPv4 destinations were
   exercised).
 
@@ -467,10 +471,11 @@ Wi-Fi Direct are later phases (P4/P5). No routing protocol is implemented.
 4. No persistence, quotas, per-node limits or revocation UI.
 5. The lab SOCKS server is loopback-only and debug-only; it is not a production
    gateway listener.
-5. `Socks5Server` implements DNS-only UDP ASSOCIATE. `GOAL_PROMPT.md` suggested
+6. `Socks5Server` implements DNS-only UDP ASSOCIATE. `GOAL_PROMPT.md` suggested
    deferring UDP ASSOCIATE; this narrow exception is required for DNS and is
    documented in ADR 0004.
-6. No physical-device evidence. `arm64-v8a` support is provided by the pinned
-   AAR but has not been executed on hardware.
-7. No instrumentation tests yet. The current evidence is unit tests plus
-   emulator UI/logcat/server logs.
+7. Physical-device evidence is partial: one Redmi 13C (`arm64-v8a`, Android 15)
+   ran each role separately. There is no run with two physical phones, no full
+   vendor/Android matrix and no long-run soak.
+8. No instrumentation tests yet. The current evidence is unit tests plus
+   emulator and physical-device UI/logcat/server logs.

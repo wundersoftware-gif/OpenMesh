@@ -283,9 +283,10 @@ gateway-down fail-closed run, wrong-token run and wrong-pin run.
   host loopback alias. It must never appear in a release build.
 - The P1 debug SOCKS server is bound to `127.0.0.1`; do not change it to
   `0.0.0.0` to "test from another device".
-- The P2 evidence used an `adb forward` on one host with two emulators. On a
-  real LAN the gateway is reachable by anything on that network, so run the
-  gateway only on a network you trust and stop it when you are finished.
+- P2 was exercised with an `adb forward` between two emulators and with a
+  physical phone gateway reachable on the office Wi-Fi (`192.168.1.58:8443`).
+  On a real LAN the gateway is reachable by anything on that network, so run
+  the gateway only on a network you trust and stop it when you are finished.
 - Do not use the lab path on a phone with real accounts. It is a plumbing test,
   not a privacy tool.
 - The host test server is an unauthenticated development server. Bind it to

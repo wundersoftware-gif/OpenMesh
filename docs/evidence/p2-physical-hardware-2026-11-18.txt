@@ -1,0 +1,279 @@
+# P2 physical-hardware evidence — 2026-11-18
+
+First P2 runs on real hardware. This is still **substitute-app evidence** (the
+debug build captures `com.openmesh.testclient`), not WhatsApp evidence, and it
+is not yet the full three-phone mesh.
+
+What was actually executed, verbatim from logcat on the devices.
+
+## Environment
+
+| Item | Value |
+|---|---|
+| Physical phone | Redmi 13C (`23108RN04Y`), serial `VWNNCQEIMJ997T9L` |
+| Phone OS | HyperOS `OS2.0` (MIUI `V816`), Android **15 / API 35** |
+| Phone ABI | **`arm64-v8a`**, `armeabi-v7a`, `armeabi` |
+| Phone display | 720 × 1600, 320 dpi |
+| Emulator | `emulator-5554`, AVD `openmesh_test`, x86_64, Android 16 / API 36 |
+| Gateway APK | `app-debug.apk` 0.2.0-p2-debug, SHA-256 `97be392b90eb8c8a6855a2a13daf5fc4a393f5108b74b92a19e552df9b28984e` |
+| Client APK | `testclient-debug.apk` 0.2.0-p2, SHA-256 `00e95eb35734c52e1b70d8a2b1ac2071a4dadd0da3e7435121f0f6e23b3605e9` |
+| PC network | Ethernet `192.168.1.17/24` |
+| Phone network | Wi-Fi **WUNDER**, `192.168.1.58/24` (same /24 as the PC) |
+| Host test servers | `node tools/test-server.mjs` on `0.0.0.0:8080` and `0.0.0.0:8081` |
+| Test suite | 45 JVM tests, 0 failures |
+
+The two APKs are byte-identical to the ones attached to the `v0.2.0-p2`
+release; no code changed for these runs.
+
+## 1. Redmi 13C as the client (arm64 hardware)
+
+Topology: the phone runs the VPN; the emulator runs the gateway. Because the
+two devices are on the same Wi-Fi, an `adb reverse` on the phone was used to
+reach the emulator gateway at `127.0.0.1:8443` (the emulator's gateway socket
+was exposed with `adb -s emulator-5554 forward tcp:8443 tcp:8443`).
+
+The phone **did have working Internet over Wi-Fi** during this run. That is
+deliberate: it makes the fail-closed run meaningful, because a leak would have
+succeeded.
+
+### 1.1 Positive run
+
+```text
+start VPN requested mode=gateway options=VpnStartOptions(
+  targetPackage=com.openmesh.testclient, labDirectSocks=false, labAllowlist=[],
+  gatewayHost=127.0.0.1, gatewayPort=8443,
+  gatewayFingerprint=46676594f8054ae4f0dfc6910fbe74e1904ddf65121419eef8541627fae17ed2,
+  gatewayToken=<omitted>)
+
+vpn=VpnStatus(phase=TUNNEL_READY, targetPackage=com.openmesh.testclient, link=UP,
+route=SELECTED, internet=VERIFIED, gatewayId=127.0.0.1:8443, hops=1, peerCount=0,
+rxBytes=10285, txBytes=5707, rxPackets=40, txPackets=53,
+remoteGateway=true, engineRunning=true,
+probeDetail=example.com answered HTTP 200 via gateway (TLS 1.3))
+```
+
+Lab client on the Redmi 13C:
+
+```text
+OpenMesh lab client 0.2.0-p2
+This app is captured only by OpenMesh debug builds.
+----- run started -----
+DNS example.com -> 172.66.147.243, 104.20.23.154,
+                    2606:4700:10::6814:179a, 2606:4700:10::ac42:93f3 (303 ms)
+HTTP GET http://10.0.2.2:8080/health
+HTTP 200 in 105 ms, declared=206, read=206 bytes
+body: {"service":"openmesh-test-server","status":"ok", ... "host":"MSI" ...}
+HTTPS GET https://example.com/
+HTTP 200 in 553 ms, declared=-1, read=577 bytes cipher=TLS_AES_128_GCM_SHA256
+body: <!doctype html>...<title>Example Domain</title>...
+HTTP GET http://10.0.2.2:8081/health (expected deny)
+expected deny after 55 ms: SocketException: Connection reset
+----- run finished -----
+```
+
+Client counters after the run:
+
+```text
+phase=TUNNEL_READY, link=UP, route=SELECTED, internet=VERIFIED,
+gatewayId=127.0.0.1:8443, hops=1,
+rxBytes=21792, txBytes=8704, rxPackets=60, txPackets=83,
+probeDetail=example.com answered HTTP 200 via gateway (TLS 1.3)
+```
+
+Gateway counters (emulator side) at that moment:
+
+```text
+gateway=GatewayStatus(running=true, port=8443,
+fingerprint=46676594f8054ae4f0dfc6910fbe74e1904ddf65121419eef8541627fae17ed2,
+accepted=9, denied=1, active=0, bytesToRemote=4593, bytesFromRemote=29512)
+```
+
+The host test server log shows the request arriving from the gateway, not from
+the phone: the phone's own network never carried the test-client HTTP request.
+
+### 1.2 Fail-closed on the phone
+
+The emulator gateway was stopped, the phone's VPN kept running, and the lab
+client ran again **while the phone still had working Wi-Fi**:
+
+```text
+vpn=VpnStatus(phase=NO_ROUTE, link=UP, route=NONE, internet=FAILED,
+gatewayId=null, hops=null, remoteGateway=true, engineRunning=true,
+probeDetail=gateway unreachable or untrusted: SSLHandshakeException: connection closed)
+
+DNS example.com -> 172.66.147.243, 104.20.23.154,
+                    2606:4700:10::6814:179a, 2606:4700:10::ac42:93f3 (8 ms)
+HTTP GET http://10.0.2.2:8080/health
+FAILED after 34 ms: SocketException: Connection reset
+HTTPS GET https://example.com/
+FAILED after 86 ms: SocketException: Connection reset
+HTTP GET http://10.0.2.2:8081/health (expected deny)
+expected deny after 21 ms: SocketException: Connection reset
+```
+
+The 8 ms DNS line is Android's **device-local resolver cache** (the same answer
+was fetched seconds earlier through the tunnel). The HTTP/HTTPS failures are
+the important part: with a fully working Wi-Fi uplink, the captured app got
+**zero** direct egress. This is the fail-closed property proven on real
+hardware, not only on the emulator.
+
+## 2. Redmi 13C as the gateway (arm64 hardware, real Wi-Fi)
+
+Topology: the emulator is the client and dials the phone's LAN address
+`192.168.1.58:8443` directly over Wi-Fi. **No `adb forward` and no `adb
+reverse` are involved in this path.** The phone accepted the TLS 1.3
+connection on its own Wi-Fi interface and exited to the Internet through the
+same Wi-Fi.
+
+### 2.1 Positive run
+
+Gateway on the phone:
+
+```text
+I/OpenMeshGateway: gateway listening on 0.0.0.0:8443
+fingerprint=503f092856b576808efda29b19503e98fa3069707644cae1addcb4753f09ce8e
+```
+
+Client on the emulator:
+
+```text
+start VPN requested mode=gateway options=VpnStartOptions(
+  targetPackage=com.openmesh.testclient, labDirectSocks=false, labAllowlist=[],
+  gatewayHost=192.168.1.58, gatewayPort=8443,
+  gatewayFingerprint=503f092856b576808efda29b19503e98fa3069707644cae1addcb4753f09ce8e,
+  gatewayToken=<omitted>)
+
+vpn=VpnStatus(phase=TUNNEL_READY, targetPackage=com.openmesh.testclient, link=UP,
+route=SELECTED, internet=VERIFIED, gatewayId=192.168.1.58:8443, hops=1,
+remoteGateway=true, engineRunning=true,
+probeDetail=example.com answered HTTP 200 via gateway (TLS 1.3))
+```
+
+Lab client on the emulator:
+
+```text
+DNS example.com -> 104.20.23.154, 172.66.147.243,
+                    2606:4700:10::6814:179a, 2606:4700:10::ac42:93f3 (310 ms)
+HTTP GET http://10.0.2.2:8080/health
+FAILED after 15557 ms: SocketException: Connection reset
+HTTPS GET https://example.com/
+HTTP 200 in 1265 ms, declared=-1, read=577 bytes cipher=TLS_AES_128_GCM_SHA256
+HTTP GET http://10.0.2.2:8081/health (expected deny)
+expected deny after 525 ms: SocketException: Connection reset
+```
+
+Gateway counters on the Redmi 13C:
+
+```text
+gateway=GatewayStatus(running=true, port=8443,
+fingerprint=503f092856b576808efda29b19503e98fa3069707644cae1addcb4753f09ce8e,
+accepted=7, denied=4, active=1, bytesToRemote=2798, bytesFromRemote=28088)
+```
+
+**Why `10.0.2.2:8080` fails in this topology:** `10.0.2.2` is the Android
+emulator's alias for the host loopback. When the gateway is the physical phone,
+that address means nothing on the phone's network, so the gateway cannot dial
+it. This is a topology mismatch in the lab harness, not a product failure. The
+meaningful results here are DNS, the nested TLS 1.3 HTTPS fetch and the policy
+denial. The HTTP-through-gateway check is covered by §1, where the gateway is
+the emulator and `10.0.2.2:8080` is the correct address.
+
+### 2.2 Fail-closed with the physical gateway stopped
+
+```text
+vpn=VpnStatus(phase=NO_ROUTE, link=UP, route=NONE, internet=FAILED,
+gatewayId=null, hops=null, remoteGateway=true, engineRunning=true,
+probeDetail=gateway unreachable or untrusted: ConnectException: failed to
+connect to /192.168.1.58 (port 8443) from /10.0.2.16 (port 56074) after
+10000ms: isConnected failed: ECONNREFUSED (Connection refused))
+
+DNS example.com -> ... (5 ms, device-local cache)
+HTTP GET http://10.0.2.2:8080/health      -> FAILED after 3151 ms
+HTTPS GET https://example.com/            -> FAILED after 10557 ms
+HTTP GET http://10.0.2.2:8081/health      -> expected deny after 2433 ms
+```
+
+### 2.3 Identity persistence on the phone
+
+The phone's gateway was stopped and started again on the same install:
+
+```text
+gateway listening on 0.0.0.0:8443
+fingerprint=503f092856b576808efda29b19503e98fa3069707644cae1addcb4753f09ce8e
+```
+
+Same fingerprint, no re-pairing. The emulator client recovered automatically on
+the next probe (`Route=SELECTED`, `Internet=VERIFIED`).
+
+Note: the phone and the emulator have **different** identities
+(`503f09…ce8e` vs `4667…7ed2`), which is the expected per-device self-signed
+certificate. A client pinned to the wrong one is rejected (§4).
+
+## 3. Cross-checks
+
+| Check | Result |
+|---|---|
+| Phone CPU/ABI | `arm64-v8a`; the APK's native tunnel library loaded and ran |
+| Phone Android | 15 / API 35 (minSdk 29) |
+| Phone as client, HTTPS through emulator gateway | HTTP 200, 577 B, TLS 1.3, 553 ms |
+| Phone as client, private decoy denied | ~55 ms reset, live listener |
+| Phone as client, no direct leak when gateway down | all fetches fail with phone Wi-Fi up |
+| Phone as gateway, emulator client over Wi-Fi | HTTPS 200, 577 B, TLS 1.3, 1265 ms |
+| Phone as gateway, 7 accepted connections | counters moved; 4 denied |
+| Wrong fingerprint on a phone client | `gateway certificate fingerprint mismatch` (emulator identity `4667…` vs phone identity `503f…`) |
+| Gateway identity across restart | same fingerprint |
+| Gateway error surface | a second bind on an occupied port reports `EADDRINUSE` in the UI, not a silent failure |
+
+## 4. Findings, including lab mistakes
+
+1. **`adb reverse` collides with the gateway port.** While the phone was a
+   client, `adb -s <phone> reverse tcp:8443 tcp:8443` created a listening
+   socket on the phone's port 8443. Starting the phone gateway at that moment
+   failed with `bind failed: EADDRINUSE (Address already in use)`, and the UI
+   showed the error. Removing the reverse mapping before starting the gateway
+   fixed it. Real deployments do not use `adb reverse`, but the failure mode is
+   correctly surfaced rather than hidden.
+2. **A stale client VPN can coexist with the gateway.** The phone had its old
+   client VPN running (pinned to the emulator's identity, so `NO_ROUTE` with a
+   fingerprint mismatch) while also serving as a gateway. The gateway's
+   outbound sockets are outside the VPN allowlist, so traffic was unaffected,
+   but the test harness stops the client VPN before using the phone as a
+   gateway to keep the state clean.
+3. **Xiaomi blocks input injection from adb** unless "USB debugging (Security
+   settings)" is enabled (requires a Mi account). `adb shell input` returns
+   `SecurityException: INJECT_EVENTS`. Screenshots of the phone were therefore
+   taken with the screen unlocked by hand, not automated. This does not affect
+   the app or the tests.
+4. **Device-local DNS cache again.** When the gateway is down, Android can
+   still answer a previously seen name from its cache (5–8 ms here, ~20 s on
+   the emulator after retries). The packet-level emulator capture in
+   `p2-direct-gateway-2026-11-17.txt` §6 proves no DNS packet leaves the device
+   outside the tunnel; the cache nuance is documented rather than hidden.
+
+## 5. What this evidence proves
+
+- The P2 client path runs on a physical **arm64-v8a** Android 15 phone:
+  TLS 1.3 with certificate pinning, RFC 1929 token authentication, DNS-over-TCP
+  through the gateway, nested TLS 1.3 HTTPS and destination-policy denial.
+- The P2 gateway path runs on a physical arm64 phone and accepts a real Wi-Fi
+  client at `192.168.1.58:8443`, with counters and a persistent identity.
+- Fail-closed holds on physical hardware with a working uplink: when the
+  gateway is absent or unauthenticated, captured traffic does not leak.
+- No central server, no root, no WhatsApp modification.
+
+## 6. What this evidence does **not** prove
+
+- **WhatsApp.** The debug build captures `com.openmesh.testclient`; WhatsApp
+  was never installed or run. The release APK targets `com.whatsapp` but is
+  unsigned and has not been executed.
+- **Two physical phones.** One endpoint was always the emulator. A real
+  phone-to-phone run (and the three-phone A → B → C mesh) is still pending.
+- **A phone with no Internet at all as the client.** The Redmi had working
+  Wi-Fi during the client run; fail-closed was proven by the captured app
+  failing while that uplink existed. A truly offline client needs the local
+  transport (BLE / Wi-Fi Direct) that is not implemented.
+- **A LAN run between two physical phones on different networks** and across
+  NAT, mobile data only, captive portals, IPv6-only, etc.
+- **mTLS, Keystore storage, quotas, revocation, fuzzing** of the gateway
+  surface. See `docs/SECURITY.md` §6.
+- Long-run battery, thermal or data-usage behaviour.

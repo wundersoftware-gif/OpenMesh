@@ -16,21 +16,26 @@ reproducible.
 | AGP | 9.0.1 |
 | Kotlin | 2.3.20 |
 | Android SDK | 36, build-tools 36.0.0 |
-| Runtime | Android emulators `openmesh_test` (P0/P1, P2 gateway) and `vp_test` (P2 client) |
-| ABI | x86_64 |
-| Android | 16 / API 36 |
-| Fingerprint | `google/sdk_gphone64_x86_64/emu64xa:16/BE2A.250530.026.F3/13894323:userdebug/dev-keys` |
-| Display | 1080 × 2400 |
+| Emulated runtime | Android emulators `openmesh_test` (P0/P1, P2 gateway) and `vp_test` (P2 client) |
+| Emulated ABI | x86_64 |
+| Emulated Android | 16 / API 36 |
+| Emulated fingerprint | `google/sdk_gphone64_x86_64/emu64xa:16/BE2A.250530.026.F3/13894323:userdebug/dev-keys` |
+| Emulated display | 1080 × 2400 |
+| Physical runtime (2026-11-18) | Redmi 13C `23108RN04Y`, serial `VWNNCQEIMJ997T9L`, HyperOS `OS2.0` (MIUI `V816`) |
+| Physical ABI | **`arm64-v8a`**, `armeabi-v7a`, `armeabi` |
+| Physical Android | **15 / API 35**, 720 × 1600, 320 dpi |
+| Physical network | Wi-Fi `WUNDER`, `192.168.1.58/24` (PC Ethernet `192.168.1.17/24`) |
 | Debug app | `com.openmesh.app.debug` version `0.2.0-p2-debug` |
 | Lab client | `com.openmesh.testclient` version `0.2.0-p2` |
 | Host server | `node tools/test-server.mjs` on `0.0.0.0:8080` |
 | Decoy server | same script on `0.0.0.0:8081` |
-| P2 link | `adb -s emulator-5554 forward tcp:8443 tcp:8443`; the client dials `10.0.2.2:8443` |
+| P2 emulator link | `adb -s emulator-5554 forward tcp:8443 tcp:8443`; the client dials `10.0.2.2:8443` |
+| P2 physical links | phone as client: `adb reverse tcp:8443 tcp:8443`; phone as gateway: emulator dials `192.168.1.58:8443` over real Wi-Fi, no forwarding |
 | VPN consent | pre-granted with `appops set ... ACTIVATE_VPN allow` for unattended runs |
 
-No physical Android device was connected. No WhatsApp account or installation
-exists on the emulators. Every result below is emulator + substitute-app
-evidence, not WhatsApp evidence and not physical-hardware evidence.
+No WhatsApp account or installation exists on any test device. All results are
+substitute-app evidence, not WhatsApp evidence. The physical runs use **one real
+phone at a time** with an emulator at the other end.
 
 Artifacts (the ones attached to the `v0.2.0-p2` release):
 
@@ -95,15 +100,15 @@ Status: **PASS**, **PARTIAL**, **NOT RUN**, or **BLOCKED**.
 | VPN-007 | Stop and reset | UI Stop VPN | **PASS** — `tun0` gone, phase `Disconnected`, counters 0, notification removed |
 | VPN-008 | Revoke handling | `onRevoke` implemented | **NOT RUN** — not triggered on the emulator |
 | GW-001 | SOCKS5 CONNECT | Unit socket test + P1 HTTP/HTTPS + P2 HTTPS | **PASS** |
-| GW-002 | DNS through the tunnel | Test client resolves `example.com`; P1 uses DNS-only UDP relay; P2 uses DNS-over-TCP through the gateway | **PASS (local lab)** and **PASS (P2, emulator pair)** |
+| GW-002 | DNS through the tunnel | Test client resolves `example.com`; P1 uses DNS-only UDP relay; P2 uses DNS-over-TCP through the gateway | **PASS (local lab)**, **PASS (P2 emulator pair)** and **PASS (P2 physical phone in each role)** |
 | GW-003 | Private destination rejected | Unit tests + live decoy on `10.0.2.2:8081` | **PASS** — denied in ~575 ms while the port was listening, on both P1 and P2 |
 | GW-004 | Unknown client rejected | Wrong RFC 1929 password (P1) and wrong gateway token (P2) | **PASS** — auth failure, denied counter, `NO_ROUTE` |
 | GW-005 | BIND rejected | Raw SOCKS request | **PASS** — reply `0x07` |
 | GW-006 | Connection limits/timeouts | Code inspection + unit coverage of config | **PARTIAL** — not load-tested |
-| MESH-001 | Client to remote gateway | Two emulators, gateway + client, TLS 1.3 with pinned fingerprint and token | **PASS (emulator, A → C only)** — not a mesh, no relay, not physical |
+| MESH-001 | Client to remote gateway | TLS 1.3 with pinned fingerprint and token: two emulators; then a physical Redmi 13C as client and as gateway (one at a time) | **PASS (A → C only)** — not a mesh, no relay, not two physical phones |
 | MESH-002 | Client → relay → gateway | Requires P3 | **NOT IMPLEMENTED** |
 | MESH-003 | Relay disconnect invalidates route | Requires P3/P6 | **NOT IMPLEMENTED** |
-| MESH-004 | Gateway disconnect → no egress | Gateway stopped while the P2 VPN is up | **PASS (emulator)** — `NO_ROUTE`, `Internet=FAILED`, all fetches fail, no DNS packet on the underlying network |
+| MESH-004 | Gateway disconnect → no egress | Gateway stopped while the P2 VPN is up, in both topologies | **PASS (emulator and physical)** — `NO_ROUTE`, `Internet=FAILED`, all fetches fail; on the physical client the phone kept a working Wi-Fi uplink and still got no direct egress; no DNS packet observed outside the tunnel |
 | SEC-001 | Manipulated frame rejected | 17 codec tests | **PASS (codec)**; no OMSH frame on any wire yet |
 | SEC-002 | Replay rejected | Wrong token and wrong pin on a live TLS gateway | **PASS (token/pin rejection)**; the bearer token itself remains replayable until regenerated |
 | SEC-003 | Wrong gateway rejected | Client pinned to a different fingerprint | **PASS (emulator)** — `gateway certificate fingerprint mismatch` |
@@ -200,15 +205,74 @@ Wrong fingerprint:    probeDetail=... gateway certificate fingerprint mismatch;
                       expected 0000...0001, got 4667...7ed2
 ```
 
-What it does **not** prove: WhatsApp (never installed), physical phones,
-`arm64-v8a`, a LAN run without `adb forward`, IPv6 destinations end to end,
-relay/multi-hop/BLE/Wi-Fi Direct, hostile-network exposure of the gateway,
-mutual TLS, Keystore storage of the token, quotas or revocation. Android's
-device-local DNS cache can answer a query after the tunnel attempts fail; no
-packet was observed outside the tunnel.
+What this emulator-only run does **not** prove: WhatsApp (never installed),
+physical phones, `arm64-v8a`, a LAN run without `adb forward`, IPv6 destinations
+end to end, relay/multi-hop/BLE/Wi-Fi Direct, hostile-network exposure of the
+gateway, mutual TLS, Keystore storage of the token, quotas or revocation.
+Android's device-local DNS cache can answer a query after the tunnel attempts
+fail; no packet was observed outside the tunnel. The physical runs in §4.7
+close the `arm64-v8a` and real-Wi-Fi gaps.
 
 Full transcript, packet capture and the recorded lab-harness failure:
 `docs/evidence/p2-direct-gateway-2026-11-17.txt`.
+
+### 4.7 P2 physical-hardware evidence (2026-11-18)
+
+Device: Redmi 13C, HyperOS 2.0 / Android 15 (API 35), `arm64-v8a`, Wi-Fi
+`192.168.1.58/24`. Same APK hashes as the release (no code changed).
+
+**Run A — phone as client, emulator as gateway.** The phone had working Wi-Fi
+during the whole run, which makes the fail-closed result meaningful. Transport
+to the emulator gateway used `adb reverse`/`adb forward`.
+
+```text
+DNS example.com -> ... (303 ms)
+HTTP http://10.0.2.2:8080/health -> 200, 206 B, 105 ms
+HTTPS https://example.com/ -> 200, 577 B, TLS_AES_128_GCM_SHA256, 553 ms
+http://10.0.2.2:8081/health -> denied after 55 ms (live listener)
+client: phase=TUNNEL_READY, link=UP, route=SELECTED, internet=VERIFIED,
+        gatewayId=127.0.0.1:8443, hops=1
+gateway: accepted=9, denied=1, bytesToRemote=4593, bytesFromRemote=29512
+
+gateway stopped:
+phase=NO_ROUTE, link=UP, route=NONE, internet=FAILED,
+probeDetail=gateway unreachable or untrusted: SSLHandshakeException: connection closed
+HTTP FAILED after 34 ms; HTTPS FAILED after 86 ms; no leak despite Wi-Fi up
+```
+
+**Run B — phone as gateway, emulator as client over real Wi-Fi.** No
+forwarding of any kind; the emulator dialled `192.168.1.58:8443`.
+
+```text
+phone gateway: listening on 0.0.0.0:8443
+               fingerprint=503f092856b576808efda29b19503e98fa3069707644cae1addcb4753f09ce8e
+DNS example.com -> ... (310 ms)
+HTTPS https://example.com/ -> 200, 577 B, TLS_AES_128_GCM_SHA256, 1265 ms
+http://10.0.2.2:8081/health -> denied after 525 ms
+http://10.0.2.2:8080/health -> not applicable in this topology (10.0.2.2 is the
+                               emulator host alias, not reachable from the phone)
+client: phase=TUNNEL_READY, route=SELECTED, internet=VERIFIED,
+        gatewayId=192.168.1.58:8443, hops=1
+phone:  accepted=7, denied=4, bytesToRemote=2798, bytesFromRemote=28088
+
+gateway stopped:
+phase=NO_ROUTE, route=NONE, internet=FAILED,
+ConnectException: failed to connect to /192.168.1.58 (port 8443) ... ECONNREFUSED
+all fetches fail
+```
+
+Identity persistence: stopping and restarting the phone gateway produced the
+same fingerprint (`503f09…ce8e`) and the emulator client recovered to
+`VERIFIED` on the next probe. Lab pitfalls observed: `adb reverse` occupies
+port 8443 on the phone (`EADDRINUSE` if the gateway starts first), and Xiaomi
+blocks `adb shell input` without "USB debugging (Security settings)", so the
+phone had to be unlocked by hand for screenshots.
+
+What it does **not** prove: WhatsApp, two physical phones in one run, a client
+phone with no Internet at all, a two-phone LAN across networks/NAT, IPv6
+end-to-end, mTLS/Keystore/quotas/fuzzing.
+
+Full transcript: `docs/evidence/p2-physical-hardware-2026-11-18.txt`.
 
 ---
 
@@ -268,9 +332,10 @@ These are **not** passing tests and must not be reported as such:
 
 | Area | Reason | What is needed |
 |---|---|---|
-| WhatsApp capture and messaging | No physical phone, no WhatsApp account | 3 physical Android devices, WhatsApp accounts, isolated network |
-| Physical arm64-v8a | No device attached | At least one arm64 phone; ideally three |
-| P2 on a LAN without adb forward | Only two emulators on one host | Two phones on the same Wi-Fi/hotspot |
+| WhatsApp capture and messaging | No WhatsApp account on the test devices | 3 physical Android devices, WhatsApp accounts, isolated network |
+| Two physical phones in one P2 run | Only one physical phone available | Two arm64 phones on the same LAN |
+| Physical `arm64-v8a` matrix | One phone covered, each role separately (Redmi 13C, Android 15) | More vendors/Android versions; ideally three phones |
+| Client phone with no Internet at all | The physical client kept its Wi-Fi uplink | Local transport (BLE/Wi-Fi Direct) and a genuinely offline client |
 | Real 3-device mesh A → B → C | P3–P7 not implemented | Relay, TLS transport with inner channel, routing |
 | BLE discovery | P4 not implemented | BLE-capable hardware, permissions, lifecycle tests |
 | Wi-Fi Direct | P5 not implemented | Multi-vendor hardware, concurrency tests |
@@ -344,9 +409,10 @@ node tools/test-server.mjs
 $env:OPENMESH_TEST_PORT='8081'; node tools/test-server.mjs
 ```
 
-Then follow README §6: P1 in 6.4, **P2 in 6.5 (two emulators)**, P0 in 6.6,
-outside-VPN check in 6.7. Exact UI coordinates are not part of the test: use
-the buttons by label so the run survives layout changes.
+Then follow README §6: P1 in 6.4, **P2 in 6.5 (two emulators)** with the
+physical variant in **6.5.1**, P0 in 6.6, outside-VPN check in 6.7. Exact UI
+coordinates are not part of the test: use the buttons by label so the run
+survives layout changes.
 
 For the packet-level no-leak check (lab only, requires a `userdebug` AVD):
 
@@ -367,7 +433,7 @@ Every DNS query must appear on `tun0` and none on `eth0`.
 |---|---|---|
 | P0 | VPN activates and traffic is limited to the target package; no connectivity claim | **Met for the substitute app in the emulator**; WhatsApp/release not verified |
 | P1 | Target uses TUN → tun2socks → SOCKS5; other apps stay outside; no loops/leaks | **Met for the substitute app in the emulator**; WhatsApp not verified; direct lab egress, not a gateway |
-| P2 | A without direct Internet reaches a test destination through C | **Partially met (emulator, A → C)** — authenticated TLS 1.3 gateway with honest Route/Internet and fail-closed behaviour proven; no WhatsApp, no physical phones, no LAN run, no relay |
+| P2 | A without direct Internet reaches a test destination through C | **Partially met (A → C)** — authenticated TLS 1.3 gateway with honest Route/Internet and fail-closed behaviour proven emulator-to-emulator and with a physical `arm64-v8a` phone in each role, including a real-Wi-Fi gateway reachable without adb forwarding. Missing: two physical phones in one run, a client with no Internet at all, WhatsApp, and the relay |
 | P3 | Real traffic traverses B and exits C; B cannot read it | **Not met** — not implemented |
 | P7 | WhatsApp messages over A → B → C | **Not met** — blocked by hardware and missing mesh |
 
