@@ -3,6 +3,44 @@
 All notable changes are recorded here. The project is pre-alpha; entries are
 grouped by the phase they belong to.
 
+## [Unreleased] — WhatsApp lab build and IPv4-only egress — 2026-11-18
+
+Still version `0.2.0-p2` (`versionCode` 2). Not attached to the `v0.2.0-p2`
+release; the WhatsApp APK is published separately as
+`v0.2.0-p2-whatsapp-lab`.
+
+### Added
+
+- `-PopenmeshTarget=<package>` Gradle property for the debug build type. The
+  default stays `com.openmesh.testclient`; `-PopenmeshTarget=com.whatsapp`
+  produces an otherwise identical, debug-signed APK (`0.2.0-p2-debug-whatsapp`)
+  that captures only WhatsApp. The package name is validated at configure time.
+- `DnsQueryFilter`: single-question AAAA queries are answered with an empty
+  NOERROR response, so the platform resolver hands out IPv4 only.
+- `SocksDnsResolver(ipv4Only = true)` on the P2 client, plus 10 unit tests.
+
+### Changed
+
+- P2 client egress is explicitly IPv4-only. `::/0` is still routed into the
+  TUN, so IPv6 cannot leak; it is captured, not carried.
+
+### Tested
+
+- Real WhatsApp through the P2 tunnel, twice: loopback gateway on the Redmi
+  13C, and emulator gateway over `adb reverse`/`adb forward`. WhatsApp's own
+  log reports `result=ready` and `connecting=>connected` with
+  `connectedIPVersion=4` on ports 443 and 5222.
+- Automated suite: **55 tests**, 0 failures.
+
+### Not validated
+
+- Message delivery, notifications or media. The longest WhatsApp stream lasted
+  76 s and ended in a clean EOF with the screen locked; no reconnect and no
+  message were observed.
+- Two physical phones in one run, a client without Internet, the relay, IPv6
+  egress. `denied=16` at the gateway is unexplained because the audit sink is a
+  no-op.
+
 ## [0.2.0-p2] — 2026-11-17
 
 P2: a **direct gateway over authenticated TLS 1.3**. One gateway hop (A → C →

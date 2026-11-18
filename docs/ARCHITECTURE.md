@@ -180,7 +180,7 @@ Debug builds substitute `com.openmesh.testclient`; release builds target
 | IPv6 address | `fd00:111::2/128` | Unique-local address, not a global claim |
 | IPv4 route | `0.0.0.0/0` | Default route inside the VPN for the allowlisted app |
 | IPv6 route | `::/0` | Same, for IPv6; captured rather than silently leaked |
-| DNS | `1.1.1.1`, `9.9.9.9` | Sent into the tunnel, not resolved on the underlying network |
+| DNS | `1.1.1.1`, `9.9.9.9` | Sent into the tunnel, not resolved on the underlying network; AAAA suppressed on the P2 client |
 | Allowed app | one package | Per-app VPN |
 | Configure intent | app launcher | The notification opens OpenMesh |
 
@@ -295,6 +295,10 @@ Flow of a single TCP connection:
 1. tun2socks resolves the hostname through the frontend's DNS resolver, which
    sends the query as **DNS-over-TCP** inside the authenticated gateway session
    to `1.1.1.1:53`/`9.9.9.9:53`. No DNS leaves the client on the local network.
+   Single-question **AAAA** queries are answered locally with an empty NOERROR
+   response (`DnsQueryFilter`) because the tunnel carries IPv4 destinations
+   only; `::/0` still points into the TUN, so IPv6 cannot leak. A queries are
+   forwarded unchanged.
 2. tun2socks opens a SOCKS5 connection to the loopback frontend.
 3. `RemoteGatewayConnector` opens (or reuses for the same destination) a TCP
    connection, performs the TLS 1.3 handshake with the pinned fingerprint, and
@@ -320,17 +324,22 @@ Verification and honesty:
 
 What this path does **not** prove:
 
-- that WhatsApp works (the debug build captures `com.openmesh.testclient`);
+- that WhatsApp **delivers messages**: real WhatsApp does connect through this
+  path (its own log reaches `result=ready` / `connecting=>connected` over IPv4,
+  on `:443` and `:5222`), but the observed stream lasted 76 s and ended in a
+  clean EOF with no reconnect and no message sent or received;
 - that a relay B exists — P2 is a single hop A → C;
 - that the gateway is safe to expose to a hostile network (no mutual TLS, no
-  quotas, no revocation, no fuzzing);
+  quotas, no revocation, no fuzzing, and denied connections are counted but not
+  explained);
 - two physical phones in one run: one physical `arm64-v8a` phone has been
   validated in each role (as client, and as a gateway reached over real Wi-Fi),
   but the other endpoint was always an emulator;
 - a client phone with no Internet at all (the physical client kept its Wi-Fi
   uplink during the fail-closed run);
-- IPv6 egress (IPv6 DNS answers are returned, but only IPv4 destinations were
-  exercised).
+- IPv6 egress: it is deliberately suppressed at the resolver, so IPv6-only
+  destinations are unreachable through the tunnel. The capture of `::/0` means
+  that limitation fails closed instead of leaking.
 
 ---
 
@@ -476,6 +485,9 @@ Wi-Fi Direct are later phases (P4/P5). No routing protocol is implemented.
    documented in ADR 0004.
 7. Physical-device evidence is partial: one Redmi 13C (`arm64-v8a`, Android 15)
    ran each role separately. There is no run with two physical phones, no full
-   vendor/Android matrix and no long-run soak.
+   vendor/Android matrix and no long-run soak. Real WhatsApp has connected
+   through the tunnel but no message delivery was observed.
 8. No instrumentation tests yet. The current evidence is unit tests plus
    emulator and physical-device UI/logcat/server logs.
+9. Egress is IPv4-only by design: the client answers AAAA with an empty
+   response. IPv6 is captured, not carried.

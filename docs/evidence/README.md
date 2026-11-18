@@ -1,17 +1,22 @@
 # Evidence index
 
-The files below were captured with the debug build and the bundled lab traffic
-client. The P0/P1 files and the first P2 transcript are from **2026-11-17** on
-the `openmesh_test` emulator; the P2 emulator-to-emulator run used two
-emulators (`emulator-5554` gateway, `emulator-5556` client) with an `adb
-forward` standing in for a LAN. The **2026-11-18** files add a physical Redmi
-13C (HyperOS 2.0, Android 15, `arm64-v8a`), used as client and as gateway with
-an emulator at the other end.
+The files below were captured with the debug build and, except for the
+WhatsApp run, the bundled lab traffic client. The P0/P1 files and the first P2
+transcript are from **2026-11-17** on the `openmesh_test` emulator; the P2
+emulator-to-emulator run used two emulators (`emulator-5554` gateway,
+`emulator-5556` client) with an `adb forward` standing in for a LAN. The
+**2026-11-18** files add a physical Redmi 13C (HyperOS 2.0, Android 15,
+`arm64-v8a`), used as client and as gateway with an emulator at the other end,
+and two runs of **real WhatsApp** through the P2 path.
 
-None of this is WhatsApp evidence, and no run used two physical phones.
+WhatsApp evidence is limited to what WhatsApp's own log says about its
+connection state. No message delivery was observed, and no run used two
+physical phones.
 
 | File | What it shows |
 |---|---|
+| `whatsapp-p2-2026-11-18.txt` | Real WhatsApp through P2 twice (loopback gateway on the Redmi, emulator gateway over adb): WhatsApp's own log reaches `connected` over IPv4 on ports 443 and 5222, then a clean EOF after 76 s. No message delivery observed |
+| `whatsapp-p2-2026-11-18.pcap` | Gateway-side capture of the WhatsApp run: DNS names (`api.whatsapp.net`, `android.googleapis.com`, `example.com`) and Meta endpoints on :443 |
 | `p2-physical-hardware-2026-11-18.txt` | P2 on a physical Redmi 13C: phone as client (HTTP 200, HTTPS 200 TLS 1.3, decoy denied, fail-closed with the phone's Wi-Fi up) and phone as gateway over real Wi-Fi (DNS, HTTPS 200, counters, identity persistence) |
 | `p2-emulator-client-via-redmi.png` | Emulator client UI: Link UP, Route SELECTED, Internet VERIFIED while connected to the physical Redmi gateway at 192.168.1.58:8443 |
 | `p2-direct-gateway-2026-11-17.txt` | P2 emulator transcript: positive run (DNS-over-TCP, HTTP 200, HTTPS 200 nested TLS 1.3, decoy denied), gateway-down fail-closed, wrong token, wrong pin, identity persistence, packet-level DNS no-leak proof, and what it does not prove |

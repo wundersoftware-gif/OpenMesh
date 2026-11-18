@@ -3,6 +3,18 @@ plugins {
     alias(libs.plugins.compose.compiler)
 }
 
+// The debug build captures the bundled lab traffic client by default. Building
+// with -PopenmeshTarget=com.whatsapp produces an otherwise identical,
+// debug-signed APK that captures WhatsApp instead, so the same code can be
+// exercised against the real target app without a signing keystore.
+val debugTargetPackage: String =
+    providers.gradleProperty("openmeshTarget").getOrElse("com.openmesh.testclient")
+val debugCapturesLab: Boolean = debugTargetPackage == "com.openmesh.testclient"
+
+require(Regex("""[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+""").matches(debugTargetPackage)) {
+    "invalid openmeshTarget package name: $debugTargetPackage"
+}
+
 android {
     namespace = "com.openmesh.app"
     compileSdk = 36
@@ -19,9 +31,10 @@ android {
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
-            versionNameSuffix = "-debug"
-            // Lab builds capture the bundled traffic generator instead of WhatsApp.
-            buildConfigField("String", "OPENMESH_TARGET_PACKAGE", "\"com.openmesh.testclient\"")
+            versionNameSuffix = if (debugCapturesLab) "-debug" else "-debug-whatsapp"
+            // Lab builds capture the bundled traffic generator; the WhatsApp
+            // variant captures the real target package instead.
+            buildConfigField("String", "OPENMESH_TARGET_PACKAGE", "\"$debugTargetPackage\"")
         }
         release {
             isMinifyEnabled = false

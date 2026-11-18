@@ -1,7 +1,8 @@
 # OpenMesh Implementation Status
 
 Last updated: **2026-11-18**
-Version: `0.2.0-p2-debug` (debug) / `0.2.0-p2` (release, unsigned)
+Version: `0.2.0-p2-debug` (lab debug) / `0.2.0-p2-debug-whatsapp`
+(WhatsApp-targeting debug) / `0.2.0-p2` (release, unsigned)
 
 This file is the authoritative phase status. If another document, a commit
 message or a UI label disagrees with this file, this file wins.
@@ -13,22 +14,26 @@ message or a UI label disagrees with this file, this file wins.
 - **P0:** implemented and validated in an emulator with a substitute app.
 - **P1:** implemented and validated in an emulator with a substitute app and a
   direct lab SOCKS egress.
-- **P2 direct gateway:** implemented and validated **emulator-to-emulator** and
+- **P2 direct gateway:** implemented and validated **emulator-to-emulator**,
   **on a physical arm64 phone in each role** — as the client against an
   emulator gateway, and as the gateway reached by an emulator client over real
-  Wi-Fi. A → C → Internet over authenticated TLS 1.3 works. There is no relay B
-  yet, and the two endpoints have never both been physical phones.
+  Wi-Fi — and with **real WhatsApp** capturing only `com.whatsapp` and reaching
+  `connected` through the tunnel. A → C → Internet over authenticated TLS 1.3
+  works. There is no relay B yet, and the two endpoints have never both been
+  physical phones.
 - **P3–P6:** not implemented.
-- **Real WhatsApp over A → B → C:** not demonstrated. WhatsApp is not installed
-  on the test phones, and the three-phone mesh does not exist.
+- **Real WhatsApp over A → B → C:** not demonstrated. WhatsApp itself has now
+  been carried by P2 (§3 of the WhatsApp evidence), but only with a single
+  gateway, with no message delivery observed, and with no relay or offline
+  client.
 - **The full mesh described in `GOAL_PROMPT.md` is not present.** Do not
   present this repository as a working multi-hop mesh VPN.
 
 P2 is a single gateway hop, not a mesh: the client connects directly to one
 gateway, the gateway exits to the Internet, and there is no forwarding between
 clients. The phase gate for BLE, Wi-Fi Direct and multi-hop routing remains
-closed until P0/P1/P2 are validated on **two physical phones** (and with
-WhatsApp).
+closed until P0/P1/P2 are validated on **two physical phones** and a WhatsApp
+message is actually delivered over the tunnel.
 
 ---
 
@@ -38,17 +43,18 @@ WhatsApp).
 |---|---|---|---|
 | **P0** - Gradle + VPN skeleton | **Partial pass (lab)** | Multiproject Gradle; Compose UI; VPN consent flow; foreground `VpnService`; TUN IPv4/IPv6; one-package allowlist; capture-only drain/drop; status, counters, errors, emergency stop; Chrome-outside test | Physical arm64 run; WhatsApp target run; manual consent/denial and `onRevoke` UI tests; release install test |
 | **P1** - TUN + tun2socks + SOCKS5 | **Partial pass (lab)** | hev-socks5-tunnel 2.20.0 pinned; JNI wrapper; loopback SOCKS5 with random auth; TCP CONNECT; DNS-only UDP; destination policy; socket protection; no-loop evidence; fail-closed evidence | WhatsApp traffic; IPv6 end-to-end; load/soak/fuzz tests; physical arm64 |
-| **P2** - Direct TLS gateway | **Partial pass (lab, A → C only; each role tested on a physical arm64 phone)** | Self-signed EC gateway identity persisted as PKCS#12; TLS 1.3 listener; SHA-256 certificate pinning; RFC 1929 token inside TLS; per-destination TLS; DNS-over-TCP through the gateway; remote frontend; honest route/Internet probe; gateway UI and counters; wrong-pin and wrong-token rejection; fail-closed when the gateway is absent; physical Redmi 13C (Android 15, arm64) run as client and as gateway over real Wi-Fi | Mutual TLS/client certificates; Android Keystore for the token; **two physical phones in one run**; WhatsApp target; quotas and revocation; graceful drain |
+| **P2** - Direct TLS gateway | **Partial pass (lab, A → C only; each role on a physical arm64 phone; real WhatsApp connected)** | Self-signed EC gateway identity persisted as PKCS#12; TLS 1.3 listener; SHA-256 certificate pinning; RFC 1929 token inside TLS; per-destination TLS; DNS-over-TCP through the gateway; IPv4-only egress (AAAA suppressed, `::/0` still captured); remote frontend; honest route/Internet probe; gateway UI and counters; wrong-pin and wrong-token rejection; fail-closed when the gateway is absent; physical Redmi 13C (Android 15, arm64) as client and as gateway over real Wi-Fi; WhatsApp-targeting debug build carried real WhatsApp to `connected` (ports 443 and 5222) via a loopback and an emulator gateway | Mutual TLS/client certificates; Android Keystore for the token; **two physical phones in one run**; message delivery over the tunnel; quotas and revocation; graceful drain; audit of denied destinations |
 | **P3** - Relay / multi-hop | **Not implemented** | `relay` module placeholder only | Frame forwarding, stream IDs, credit, hop limits; keep relays unable to read destinations or payloads |
 | **P4** - BLE discovery | **Not implemented** | `discovery:ble` module placeholder only | Advertising, scanning, permissions, authenticated handshake, lifecycle |
 | **P5** - Wi-Fi Direct | **Not implemented** | None | Group negotiation, multi-vendor testing, concurrency with Internet |
 | **P6** - Dynamic routing | **Not implemented** | `core:routing` placeholder only | Neighbour table, authenticated announcements, cost, expiry, loops, failover |
-| **P7** - Real WhatsApp | **Not started / blocked** | None | Three physical phones, accounts, offline client, measurements, feature gaps |
+| **P7** - Real WhatsApp | **Partial: WhatsApp captured and connected, delivery not observed** | WhatsApp-targeting debug build (`-PopenmeshTarget=com.whatsapp`); real WhatsApp reached `result=ready` / `connecting=>connected` over IPv4 through a loopback gateway and through an emulator gateway; no other package captured | Two/three physical phones, a message actually sent and received, notifications and media, an offline client, the relay B |
 
 Legend: **Partial pass (lab)** means the mechanism works with the lab
 substitute app; it is not a pass for WhatsApp. P2 was additionally exercised
-on a physical arm64 phone in each role (client and gateway), but never with
-both endpoints physical in the same run.
+on a physical arm64 phone in each role (client and gateway), and with real
+WhatsApp captured and connected, but never with both endpoints physical in the
+same run and never with a message delivery observed.
 
 ---
 
@@ -76,6 +82,11 @@ client phone A                                     gateway phone C
 - Each destination gets its own TCP+TLS connection. There is no multiplexing.
 - DNS is sent as DNS-over-TCP to `1.1.1.1:53`/`9.9.9.9:53` **through the
   gateway**; the client never sends DNS on the local network.
+- Egress is **IPv4-only**. `::/0` remains routed into the TUN so IPv6 cannot
+  leak, but the client resolver answers single-question AAAA queries with an
+  empty NOERROR response (`DnsQueryFilter`), so apps pick IPv4 instead of
+  black-holing themselves on an IPv6 destination the tunnel cannot carry. This
+  is a deliberate limitation, not IPv6 support.
 - Route and Internet are not configuration labels: the service runs a real
   probe (`example.com:443`, nested TLS 1.3, HTTP HEAD 2xx/3xx) and only then
   publishes `Route=SELECTED` and `Internet=VERIFIED`.
@@ -91,6 +102,16 @@ on a Redmi 13C (HyperOS 2.0, Android 15, `arm64-v8a`): the phone as the client
 (against the emulator gateway) and the phone as the gateway reached by the
 emulator over real Wi-Fi, with fail-closed and identity-persistence runs.
 
+`docs/evidence/whatsapp-p2-2026-11-18.txt` contains the two WhatsApp runs with
+the WhatsApp-targeting debug build: a loopback gateway on the Redmi, and a
+separate emulator gateway reached over `adb reverse`/`adb forward`. In both,
+WhatsApp's own log reports `result=ready` and `connecting=>connected` with
+`connectedIPVersion=4` on its chat stream (port 5222) and on port 443. The
+longest observed stream lasted 76 s and ended in a clean EOF; no reconnect and
+no message delivery were observed, so this is **connectivity evidence, not
+messaging evidence**. `docs/evidence/whatsapp-p2-2026-11-18.pcap` is the
+gateway-side capture of that run (DNS names and Meta endpoints included).
+
 ---
 
 ## 4. Deliverables from `GOAL_PROMPT.md` §17
@@ -103,12 +124,12 @@ emulator over real Wi-Fi, with fail-closed and identity-persistence runs.
 | 4 | Minimal Android application | Done |
 | 5 | Request VPN authorization | Done; system dialog flow implemented, automated lab used appops |
 | 6 | Create TUN | Done and observed (`tun0`, `10.111.0.2/32`, `fd00:111::2/128`) |
-| 7 | Allowlist `com.whatsapp` | Implemented in release config; **not run** (debug uses test client) |
+| 7 | Allowlist `com.whatsapp` | Implemented; captured on a physical phone with the WhatsApp-targeting debug build (no other package in the allowlist) |
 | 8 | Show VPN state | Done, with independent Link / Route / Internet |
 | 9 | Tests proving other apps stay outside | Chrome test done in emulator |
 | 10 | Document limitations | Done - README, this file, TEST_PLAN, SECURITY |
 | 11 | Local tun2socks → SOCKS5 demonstration | Done with lab client, not WhatsApp |
-| 12 | Remote authenticated gateway | Done emulator-to-emulator and with a physical arm64 phone in each role; **not yet two physical phones** |
+| 12 | Remote authenticated gateway | Done emulator-to-emulator, with a physical arm64 phone in each role, and with real WhatsApp through an emulator gateway; **not yet two physical phones** |
 | 13 | P2 UI and gateway lifecycle | Done; gateway foreground service, pin/token display, counters |
 | 14 | Fail-closed with a missing/untrusted gateway | Done in the emulator and on the physical phone (with its Wi-Fi uplink up) |
 
@@ -123,14 +144,14 @@ emulator over real Wi-Fi, with fail-closed and identity-persistence runs.
 | `core:model` | Yes | No dedicated tests | Models are simple; `MeshNode` validates IDs and battery |
 | `core:protocol` | Yes | 17 | Strict bounded OMSH codec; not used by the P2 stream path |
 | `core:routing` | No | No | Placeholder |
-| `gateway` | Yes | 18 | SOCKS5 server, policy, DNS resolvers, TLS gateway, pinned client connector, metrics |
+| `gateway` | Yes | 28 | SOCKS5 server, policy, DNS resolvers, AAAA filter, TLS gateway, pinned client connector, metrics |
 | `vpn:tun2socks` | Yes | 5 | JNI wrapper + config |
 | `vpn:android` | Yes | No unit tests | Service/TUN/capture, lab and remote frontends, probe; exercised on emulator |
 | `transport` | Yes | 5 | TLS 1.3 contexts, identity, fingerprint pinning, loopback tests |
 | `relay` | No | No | Placeholder |
 | `discovery:ble` | No | No | Placeholder |
 
-Total automated tests: **45**, all passing.
+Total automated tests: **55**, all passing.
 
 ---
 
@@ -147,7 +168,8 @@ Total automated tests: **45**, all passing.
 - [x] Own sockets excluded (not in allowlist) and `protect()` used.
 - [x] `onRevoke()` and safe teardown.
 - [x] Visible error states and emergency stop.
-- [ ] WhatsApp package captured on a real device.
+- [x] WhatsApp package captured on a real device (debug build with
+      `-PopenmeshTarget=com.whatsapp`; the release build uses the same target).
 - [ ] Manual consent dialog and denial path tested.
 - [ ] Revocation tested on a device.
 
@@ -156,6 +178,8 @@ Total automated tests: **45**, all passing.
 - [x] tun2socks integrated and running (`tun2socks` engine, counters move).
 - [x] TCP through local SOCKS5.
 - [x] DNS through the tunnel and a restricted relay.
+- [x] IPv4-only egress: AAAA queries answered empty, `::/0` still routed into
+      the TUN, so nothing falls back to the underlying network.
 - [x] No loop observed in the lab path.
 - [x] Fail-closed when the lab path is off.
 - [x] Strict destination policy with anti-rebinding.
@@ -167,6 +191,9 @@ Total automated tests: **45**, all passing.
 - [x] P2 client and P2 gateway each ran on a physical `arm64-v8a` Android 15
       phone (Redmi 13C); the gateway was reached over real Wi-Fi with no adb
       forwarding.
+- [x] Real WhatsApp reached `connected` through the tunnel with IPv4 only
+      (loopback gateway and emulator gateway).
+- [ ] Message delivery, notifications and media through the tunnel.
 - [ ] Relay and multi-hop (P3).
 - [ ] IPv6 end-to-end.
 - [ ] Load, soak, fuzz and fault-injection tests.
@@ -225,13 +252,24 @@ Total automated tests: **45**, all passing.
    run without an emulator, and a phone whose client has no Internet at all,
    are still missing.
 9. The release APK is unsigned in the Gradle project and targets
-   `com.whatsapp`; it has not been run against WhatsApp. Do not treat it as a
-   validated messaging product.
+   `com.whatsapp`; the release artifact itself has never been installed or run.
+   The WhatsApp evidence comes from a **debug-signed** build of the same code
+   with the same target package.
 10. The OMSH frame codec is still not used by the P2 transport; P2 carries
     SOCKS5 directly inside TLS. The codec remains the contract for the relay
     phase.
 11. The native tun2socks AAR is prebuilt; it is pinned by hash but not rebuilt
     from source in this repository.
+12. The gateway counts denials but does not record why: the P2 run served real
+    WhatsApp with `denied=16` and the audit sink was a no-op, so those denials
+    are unexplained. Audit logging per denial is required before any deployment.
+13. The longest real WhatsApp stream observed lasted 76 s and ended in a clean
+    `Received EOF`; no reconnect and no message delivery were observed while
+    the phone screen was locked. Messaging, notifications and media over the
+    tunnel are unproven.
+14. IPv4-only egress is deliberate but it is a functional limit: destinations
+    that are IPv6-only cannot be reached through the tunnel. `::/0` is still
+    captured, so the limitation fails closed rather than leaking.
 
 ---
 
@@ -248,12 +286,13 @@ Total automated tests: **45**, all passing.
    - Stop the gateway and repeat the fail-closed run.
 2. **Manual consent and revoke tests** on a phone: system dialog, denial,
    `onRevoke` from Android settings.
-3. **WhatsApp P2 run.** Install the WhatsApp-targeting release on a phone with
-   a test account, confirm capture and P2 egress, then measure text send/receive
-   and notifications. Do not modify or automate WhatsApp.
+3. **WhatsApp delivery and stability.** Capture is done and connectivity is
+   proven (see the WhatsApp evidence). Still missing: a message actually sent
+   and received through the tunnel with the screen on, a reconnect after the
+   observed EOF, notifications and media, and a longer soak.
 4. **P2 hardening.** Mutual TLS or client certificates, Android Keystore for
-   the token and key, graceful drain, connection pooling, quotas, revocation
-   UI, fuzzing, IPv6 egress, and a release signing process.
+   the token and key, per-denial audit logging, graceful drain, connection
+   pooling, quotas, revocation UI, fuzzing, and a release signing process.
 5. **Only after physical P2 + WhatsApp validation:** P3 relay, then BLE/Wi-Fi
    Direct and routing, each behind its own acceptance gate.
 6. **P7 acceptance.** Three physical phones, client genuinely offline except
@@ -276,6 +315,8 @@ later phase before the earlier one is reproducible on hardware.
 | P2 direct-gateway transcript (emulator pair) | `docs/evidence/p2-direct-gateway-2026-11-17.txt` |
 | P2 app screenshot (emulator gateway) | `docs/evidence/p2-app-gateway-running.png` |
 | P2 physical-hardware transcript (Redmi 13C, each role) | `docs/evidence/p2-physical-hardware-2026-11-18.txt` |
+| WhatsApp through the P2 tunnel (loopback + emulator gateway) | `docs/evidence/whatsapp-p2-2026-11-18.txt` |
+| Gateway-side capture of the WhatsApp run | `docs/evidence/whatsapp-p2-2026-11-18.pcap` |
 | P2 emulator client through the physical Redmi gateway | `docs/evidence/p2-emulator-client-via-redmi.png` |
 | Host servers | `docs/evidence/host-test-server-8080.log`, `host-test-server-8081.log` |
 | Release notes and artifact hashes | `docs/evidence/release-notes-v0.2.0-p2.md` |

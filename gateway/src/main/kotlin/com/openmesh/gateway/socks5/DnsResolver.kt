@@ -73,9 +73,13 @@ class SocksDnsResolver(
     ),
     private val timeoutMillis: Int = 5_000,
     private val maxResponseBytes: Int = 4_096,
+    private val ipv4Only: Boolean = false,
 ) : DnsResolver {
     override fun resolve(query: ByteArray): ByteArray? {
         if (query.size < 12 || query.size > 65_535) return null
+        if (ipv4Only) {
+            DnsQueryFilter.emptyIpv6Answer(query)?.let { return it }
+        }
         for (upstream in upstreams) {
             var socket: Socket? = null
             try {

@@ -58,6 +58,10 @@ class RemoteSocksFrontend(
                 InetSocketAddress("1.1.1.1", 53),
                 InetSocketAddress("9.9.9.9", 53),
             ),
+            // P2 carries IPv4 destinations only. AAAA answers would make apps
+            // prefer IPv6, which the tunnel cannot deliver; ::/0 stays routed
+            // into the TUN so IPv6 still cannot leak.
+            ipv4Only = true,
         )
         val socks = Socks5Server(
             config = Socks5Server.Config(

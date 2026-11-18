@@ -1,0 +1,243 @@
+# WhatsApp through the P2 data path — 2026-11-18
+
+**Status: partial.** Real, unmodified WhatsApp connected through the OpenMesh
+P2 tunnel twice: once with a loopback gateway on the same phone (§2) and once
+with the gateway on a separate Android instance reached over `adb` forwarding
+(§3). WhatsApp's own log reports `result=ready` and
+`connecting=>connected` in both runs, over IPv4.
+
+Not proven: that a message was delivered, that the session survives more than
+76 s, two physical phones, a client without its own Internet, and the A → B → C
+mesh. See §5.
+
+Everything below is quoted from `adb logcat` and `adb shell` output, with the
+WhatsApp-targeting debug build (`-PopenmeshTarget=com.whatsapp`, debug-signed,
+version `0.2.0-p2-debug-whatsapp`, APK SHA-256
+`09209178FC46692BBA6CEEB140ACFC55FCF5FDFB3B08A3996AE86345DF873322`).
+
+## 1. Why this build exists
+
+The published lab APK captures `com.openmesh.testclient`. To exercise the real
+target app the debug build type now accepts
+`-PopenmeshTarget=<package>`; with `com.whatsapp` the same code captures
+WhatsApp and nothing else. The APK is still debug-signed and installable, with
+the same application id (`com.openmesh.app.debug`), so it replaces the lab build
+on the device. No WhatsApp code, data or account is modified; the app is only
+placed inside a `VpnService` allowlist, which is public Android functionality.
+
+## 2. Run A — self-gateway on the Redmi 13C (one device, client and gateway)
+
+Topology: the phone runs both the P2 client VPN (capturing only `com.whatsapp`)
+and the P2 gateway on `0.0.0.0:8443`. The client dials `127.0.0.1:8443`; the
+gateway's outbound sockets belong to the OpenMesh UID, which is outside the VPN
+allowlist, so they leave through the phone's own Wi-Fi. This is a loopback
+gateway, **not** a second device.
+
+Device: Redmi 13C, HyperOS 2.0, Android 15 / API 35, `arm64-v8a`, Wi-Fi
+`192.168.1.58/24`.
+
+### 2.1 Tunnel state
+
+```text
+start VPN requested mode=gateway options=VpnStartOptions(
+  targetPackage=com.whatsapp, labDirectSocks=false, labAllowlist=[],
+  gatewayHost=127.0.0.1, gatewayPort=8443,
+  gatewayFingerprint=503f092856b576808efda29b19503e98fa3069707644cae1addcb4753f09ce8e,
+  gatewayToken=<omitted>)
+
+vpn=VpnStatus(phase=TUNNEL_READY, targetPackage=com.whatsapp, link=UP,
+route=SELECTED, internet=VERIFIED, gatewayId=127.0.0.1:8443, hops=1,
+remoteGateway=true, engineRunning=true,
+probeDetail=example.com answered HTTP 200 via gateway (TLS 1.3))
+
+gateway=GatewayStatus(running=true, port=8443,
+fingerprint=503f092856b576808efda29b19503e98fa3069707644cae1addcb4753f09ce8e,
+accepted=9, denied=0, active=3,
+bytesToRemote=3406, bytesFromRemote=30061)
+```
+
+### 2.2 WhatsApp's own connection log
+
+After `am force-stop com.whatsapp` and a fresh start, with the VPN up:
+
+```text
+11-18 10:33:50.201 E msys: WAJMNSStreamImplMNSTCPStreamCreate ... MNSStreamRaw
+11-18 10:33:50.201 E msys: WAJMNSStreamImplCreate/connect (deferEstablish=No)
+11-18 10:33:50.201 E msys: no ip addresses provided, using DNS resolution
+11-18 10:33:50.202 E msys: WAJMNSStream/impl/establish (endpoint=g.whatsapp.net:443)(ipAddressCount=0)
+11-18 10:33:50.202 E msys: WAJMNSStream/impl/state-changed (initial=>connecting)
+11-18 10:33:50.206 E msys: WAJMNSStream/impl/callback/onMNSReady
+11-18 10:33:50.206 E msys: WAJMNSStream/impl/report result=ready, error=(none), tls=No,
+                        impl=Raw, networkHandle=0, port=443,
+                        connectedIPVersion=4, resolvedIPAddressCount=1,
+                        dnsResolutionMS=0, dnsCacheHit=Yes, connectMS=4
+11-18 10:33:50.207 E msys: WAJMNSStream/impl/state-changed (connecting=>connected)
+```
+
+`result=ready`, `connecting=>connected`, `connectedIPVersion=4`: WhatsApp's
+chat stream is established through the OpenMesh tunnel. The gateway counters
+move at the same time (`accepted=9, active=3`), and no other package is
+captured by this build.
+
+### 2.3 What failed before the IPv4-only fix
+
+The first WhatsApp run resolved to IPv6 and every connection was reset:
+
+```text
+WAJMNSStreamImplCreateConnectionReport ...
+  result=failure, error=MNSTCPSocketReceive(): Connection reset by peer,
+  port=5222, connectedIPVersion=6, connectMS=2
+  (same for port 80 and 443)
+```
+
+Root cause: the P2 tunnel carries IPv4 destinations only, while the TUN routes
+`::/0` into the tunnel (so IPv6 cannot leak). WhatsApp preferred the AAAA
+answer, connected to a black-holed IPv6 destination and treated the tunnel as
+broken. Fix: the P2 client DNS resolver answers single-question AAAA queries
+with an empty NOERROR response (`DnsQueryFilter`), so the platform resolver
+hands out IPv4 only. `::/0` still points into the TUN. This is documented as
+IPv4-only egress, not as IPv6 support.
+
+## 3. Run B — emulator as the gateway (phone client, separate device)
+
+Topology: the Redmi runs only the client VPN, still capturing only
+`com.whatsapp`, and dials `127.0.0.1:8443`. That port is bridged over USB —
+`adb reverse tcp:8443 tcp:8443` on the phone, `adb forward tcp:8443 tcp:8443`
+on the emulator — to a P2 gateway running in `emulator-5554` (x86_64, Android
+16 / API 36, `openmesh_test`). The gateway exits to the Internet through the
+emulator's own network stack. This is a **separate Android device as the
+gateway**, but over `adb`, not over a LAN.
+
+Gateway identity: `46676594f8054ae4f0dfc6910fbe74e1904ddf65121419eef8541627fae17ed2`.
+
+### 3.1 Tunnel state
+
+```text
+vpn=VpnStatus(phase=TUNNEL_READY, targetPackage=com.whatsapp, link=UP,
+route=SELECTED, internet=VERIFIED, gatewayId=127.0.0.1:8443, hops=1,
+remoteGateway=true, engineRunning=true,
+probeDetail=example.com answered HTTP 200 via gateway (TLS 1.3))
+```
+
+One setup problem was reproduced from the earlier emulator work: with both
+Wi-Fi (`10.0.2.16`) and cellular (`10.0.2.15`) up, the emulator gateway's probe
+through its own egress failed with `SOCKS reply 4`
+(`REPLY_HOST_UNREACHABLE`), so the client honestly showed
+`internet=FAILED` even though TLS and the token authenticated. Disabling the
+emulator's cellular data (`svc data disable`) restored the gateway's egress and
+the probe reached `VERIFIED`. This is an emulator networking artefact, not a
+tunnel defect; it is listed here because it is easy to mistake for one.
+
+### 3.2 WhatsApp's own connection log
+
+After `am force-stop com.whatsapp` and a fresh start, with the VPN up and the
+screen locked:
+
+```text
+11-18 10:39:35.845 E msys: WAJMNSStream/impl/establish
+                        (endpoint=g.whatsapp.net:5222)(ipAddressCount=0)
+11-18 10:39:35.846 E msys: WAJMNSStream/impl/state-changed (initial=>connecting)
+11-18 10:39:35.850 E msys: WAJMNSStream/impl/report result=ready, error=(none),
+                        tls=No, impl=Raw, networkHandle=0, port=5222,
+                        connectedIPVersion=4, resolvedIPAddressCount=1,
+                        dnsResolutionMS=0, dnsCacheHit=Yes, connectMS=4
+11-18 10:39:35.850 E msys: WAJMNSStream/impl/state-changed (connecting=>connected)
+```
+
+Port **5222** is WhatsApp's long-lived chat/XMPP stream. It reached `connected`
+through the phone's TUN, the remote SOCKS5 frontend, the pinned TLS 1.3 session
+to the emulator, the gateway's SOCKS5 and the gateway's own egress. No
+WhatsApp traffic is special-cased anywhere in OpenMesh: it is ordinary TCP.
+
+Gateway counters during this run:
+
+```text
+gateway=GatewayStatus(running=true, port=8443,
+fingerprint=46676594f8054ae4f0dfc6910fbe74e1904ddf65121419eef8541627fae17ed2,
+accepted=13, denied=16, active=0,
+bytesToRemote=21811, bytesFromRemote=52585)
+```
+
+`accepted` counts every TLS+token+SOCKS connection served, and that includes
+the 30-second Internet probe and every DNS-over-TCP query, so it is not "13
+WhatsApp streams". `denied` counts failed TLS handshakes, failed
+authentication, and refused or policy-denied destinations. The gateway ran with
+the no-op audit sink, so the individual denial reasons were **not** recorded:
+the 16 denials are unexplained, not explained away. Adding an audit log line
+per denial is a listed follow-up.
+
+### 3.3 The stream ended after 76 seconds
+
+```text
+11-18 10:40:51.398 E msys: WAJMNSStream/impl/report result=failure,
+                        error=MNSTCPSocketReceive(): Received EOF, tls=No,
+                        impl=Raw, networkHandle=0, port=5222,
+                        connectedIPVersion=4, connectMS=4
+11-18 10:40:51.398 E msys: WAJMNSStream/impl/state-changed (connected=>disconnected)
+```
+
+`Received EOF` is a clean close, not a reset. The gateway's SOCKS idle timeout
+is 300 s, so this was not OpenMesh's idle timer. After the EOF, `com.whatsapp`
+(pid 9450) stayed alive and the client VPN stayed `VERIFIED`, but no further
+`establish` or `connecting=>connected` event appeared in the following
+**~9 minutes** of logcat. The phone screen was locked and asleep throughout
+(`mWakefulness=Asleep`, `DreamingLockscreen=true`), so WhatsApp may simply have
+deferred reconnecting in the background; the cause is not established.
+
+No message was sent and no message was received during this run. **Delivery
+through the tunnel is not demonstrated.**
+
+## 4. What this proves and what it does not
+
+Proves:
+
+- A debug-signed, installable APK can capture **real, unmodified WhatsApp** and
+  no other package, without root and through the official `VpnService`
+  allowlist.
+- WhatsApp's own chat stream reached `connected` through the OpenMesh P2 data
+  path twice: through a loopback gateway on the phone, and through a gateway on
+  a **different Android instance** reached over `adb`.
+- Connections arrived over **IPv4** (`connectedIPVersion=4`), which is what the
+  tunnel carries, and the AAAA suppression is what makes WhatsApp choose it.
+- The gateway is doing real work: its byte counters grow while WhatsApp
+  connects, and its identity is pinned by the client.
+
+Does **not** prove:
+
+- Message delivery, notifications, media upload/download or call setup. The
+  screen was locked and nothing was sent or received.
+- Session stability: the longest observed WhatsApp stream lasted 76 s, and no
+  reconnect was observed in the following ~9 minutes.
+- A second **physical** phone as the gateway (§3 uses an emulator), or the
+  A → B → C relay path.
+- A client phone with no Internet of its own. In every run the phone had a
+  working Wi-Fi uplink.
+- IPv6 egress, multi-hop, BLE or Wi-Fi Direct.
+
+## 5. How to reproduce
+
+```powershell
+# 1. Build the WhatsApp-targeting debug APK (cmd /c keeps PowerShell from
+#    splitting the property at the dot).
+$env:JAVA_HOME='C:\Program Files\Java\jdk-21'
+cmd /c "gradlew.bat :app:assembleDebug -PopenmeshTarget=com.whatsapp --console=plain"
+
+# 2. Install on the phone and bridge the gateway port.
+adb -s <phone> install -r -t app\build\outputs\apk\debug\app-debug.apk
+adb -s <phone> reverse tcp:8443 tcp:8443
+adb -s <emulator> forward tcp:8443 tcp:8443
+
+# 3. Start the gateway on the emulator (debug-only receiver), read its
+#    fingerprint and token from the UI or from shared_prefs, then start the
+#    client on the phone with those values.
+adb -s <emulator> shell am broadcast \
+  -a com.openmesh.debug.START_GATEWAY --ei port 8443 \
+  -n com.openmesh.app.debug/com.openmesh.app.DebugControlReceiver
+
+# 4. Start WhatsApp, then read its own connection log.
+adb -s <phone> shell am start -n com.whatsapp/.Main
+adb -s <phone> logcat -d | Select-String 'WAJMNSStream'
+```
+
+Remember to `adb -s <phone> reverse --remove-all` before running the gateway on
+that same phone, otherwise port 8443 is already taken (`EADDRINUSE`).

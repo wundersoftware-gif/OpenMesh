@@ -164,7 +164,13 @@ demonstrating exact matching rather than "private IPs are allowed in debug".
   datagrams with a valid header, and only up to 4096 bytes.
 - Upstream queries go to the configured public resolvers; no local resolver is
   used as a fallback.
-- DNS question names are not logged. Responses are not inspected or cached.
+- DNS question names are not logged. Responses are not inspected or cached,
+  with one deliberate exception: on the P2 client, a single-question **AAAA**
+  query is answered locally with an empty NOERROR response, and the name is
+  still not logged.
+- P2 egress is IPv4-only. `::/0` remains routed into the TUN, so the platform
+  cannot fall back to IPv6 outside the tunnel; AAAA suppression just stops apps
+  from preferring an IPv6 destination the tunnel cannot carry.
 
 Residual risk: the chosen upstream resolver sees the client's queries. In P1
 DNS is not encrypted end-to-end. In P2 the query travels as DNS-over-TCP inside
@@ -174,8 +180,10 @@ only the resolver, not the client.
 ### 5.6 Logging and data minimisation
 
 - The UI shows counters, phases, target package and errors.
-- `GatewayAudit` is metadata-only (`sessionId`, host, port, byte counts). It is
-  currently a no-op in the lab frontend.
+- `GatewayAudit` is metadata-only (`sessionId`, host, port, byte counts). The app
+  currently installs a no-op sink, so denials are counted but their reasons are
+  not recorded. That protects privacy but makes abuse investigation impossible;
+  a metadata-only denial log is required before exposure.
 - There is no analytics SDK, no crash reporter, no cloud endpoint, no account,
   no advertising ID, no contact access and no storage permission.
 - `GatewayMetrics` keeps aggregate counters, not destination history.
@@ -264,14 +272,15 @@ gateway-down fail-closed run, wrong-token run and wrong-pin run.
 
 | Risk | Severity | Why it is acceptable for P2 today | Required before release |
 |---|---|---|---|
-| WhatsApp itself never tested | High | Explicitly out of scope until hardware is available; no claim made | P7 on physical devices |
-| Debug target is not WhatsApp | Medium | Lab-only substitution; visible in UI; release targets WhatsApp | Physical P0/P1/P2 with WhatsApp |
+| WhatsApp delivery never observed | High | WhatsApp's own log reaches `connected` over IPv4 through the tunnel, but the stream ended after 76 s and no message was sent or received; no claim of working messaging is made | Message send/receive and a soak on physical devices |
+| WhatsApp lab APK drops all WhatsApp traffic without a gateway | High | Debug-signed, explicitly labelled, not attached to the main release; with no gateway the tunnel fails closed as designed | Never distribute as a product; signed release only after P7 |
 | P2 is a single hop | High | No relay exists, so no relay can read anything; the UI says "direct gateway", hops=1 | P3 with an encrypted inner channel |
 | Bearer token is replayable | High | Token is entered out of band, lives in app-private storage, and is regenerable in the UI | mTLS or signed challenges |
 | Gateway key and token not Keystore-backed | Medium | App-private storage only; device theft while the gateway runs is the exposure window | Keystore migration + screen lock policy |
 | Gateway listener is public (`0.0.0.0:8443`) | High | TLS 1.3 + pin + token + destination policy; visible foreground service with a stop action; untested against a hostile network | Fuzzing, quotas, revocation, review |
 | DNS upstream sees query names | Medium | No local leak; names not logged; DNS travels inside TLS on the P2 link | DoH/DoT upstream or destination resolver |
-| Emulator-only evidence | High | x86_64 only; no arm64 hardware run | Physical arm64 matrix |
+| One physical phone at a time | High | Each role was validated on arm64 hardware, but the other endpoint was always an emulator | Two physical phones in one run |
+| IPv4-only egress | Medium | Deliberate: AAAA answered empty, `::/0` captured, so nothing leaks; IPv6-only destinations are unreachable | IPv6 egress or an explicit product limitation |
 | No fuzzing of TLS/SOCKS/frames | Medium | Lab scope; unit and socket-level tests cover the happy path and the auth/pin failures | Fuzz + review before exposure |
 | Native library supply chain | Medium | AAR pinned by SHA-256, MIT, source commit recorded | Reproducible rebuild / SBOM |
 
@@ -287,8 +296,12 @@ gateway-down fail-closed run, wrong-token run and wrong-pin run.
   physical phone gateway reachable on the office Wi-Fi (`192.168.1.58:8443`).
   On a real LAN the gateway is reachable by anything on that network, so run
   the gateway only on a network you trust and stop it when you are finished.
-- Do not use the lab path on a phone with real accounts. It is a plumbing test,
-  not a privacy tool.
+- Do not use the lab path on a phone you depend on. The WhatsApp-targeting build
+  captures `com.whatsapp`; with no gateway reachable, WhatsApp has no
+  connectivity at all. The 2026-11-18 run used the operator's own registered
+  account on a test phone and quoted only WhatsApp's connection-state log lines
+  — no message content, contacts or media were read, and WhatsApp was never
+  automated. Treat that build as radio-active lab equipment.
 - The host test server is an unauthenticated development server. Bind it to
   localhost if other machines share the network, or stop it when finished.
 - The debug build exports `DebugControlReceiver` so adb can start and stop the

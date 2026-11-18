@@ -25,13 +25,18 @@ The installable P2 lab build (0.2.0-p2, pre-release) and its test client are
 attached to the GitHub release:
 
 - **OpenMesh lab APK + test client:** <https://github.com/wundersoftware-gif/OpenMesh/releases/tag/v0.2.0-p2>
+- **WhatsApp-targeting lab APK:** <https://github.com/wundersoftware-gif/OpenMesh/releases/tag/v0.2.0-p2-whatsapp-lab>
 
-Install both APKs to exercise the P2 evidence on an Android 10+ device or
-emulator. This is **not** a working WhatsApp mesh VPN: the debug APK captures
-only `com.openmesh.testclient`, there is no relay, and the physical evidence
-uses one real phone at a time with an emulator at the other end. The release APK
-targets `com.whatsapp` but is unsigned and unvalidated, so it is not attached to
-the release. Read the status below and
+Install both P2 APKs to exercise the P2 evidence on an Android 10+ device or
+emulator. The `0.2.0-p2` debug APK captures only `com.openmesh.testclient`. The
+`0.2.1-whatsapp-lab` APK captures **`com.whatsapp`** instead, and with it real
+WhatsApp connected through the tunnel in the lab on 2026-11-18 — but it is a
+lab artifact: with no gateway reachable, WhatsApp has **no connectivity at
+all**, because its traffic is captured and dropped. Do not install it on a
+phone you rely on. This is **not** a working WhatsApp mesh VPN: there is no
+relay, no message-delivery evidence, and no run with two physical phones. The
+release APK targets `com.whatsapp` but is unsigned and unvalidated, so it is
+not distributed. Read the status below and
 [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md) before installing.
 
 ---
@@ -42,12 +47,12 @@ the release. Read the status below and
 |---|---|---|---|
 | P0 | Gradle skeleton, VPN consent, TUN, per-app allowlist, capture-only fail-closed, UI state/logs | **Implemented and validated in emulator with a substitute app** | [`docs/evidence/p0-failclosed-2026-11-17.txt`](docs/evidence/p0-failclosed-2026-11-17.txt) |
 | P1 | hev-socks5-tunnel, loopback SOCKS5, TCP + DNS-only UDP, lab egress, no leaks/loops | **Implemented and validated in emulator with a substitute app** | [`docs/evidence/p1-testclient-2026-11-17.txt`](docs/evidence/p1-testclient-2026-11-17.txt) |
-| P2 | Authenticated remote gateway over TLS 1.3 (A → C → Internet, no relay) | **Implemented and validated emulator-to-emulator and on a physical arm64 phone in each role, with a substitute app** | [`docs/evidence/p2-direct-gateway-2026-11-17.txt`](docs/evidence/p2-direct-gateway-2026-11-17.txt), [`docs/evidence/p2-physical-hardware-2026-11-18.txt`](docs/evidence/p2-physical-hardware-2026-11-18.txt) |
+| P2 | Authenticated remote gateway over TLS 1.3 (A → C → Internet, no relay) | **Implemented and validated emulator-to-emulator, on a physical arm64 phone in each role, and with real WhatsApp connected through the tunnel** | [`docs/evidence/p2-direct-gateway-2026-11-17.txt`](docs/evidence/p2-direct-gateway-2026-11-17.txt), [`docs/evidence/p2-physical-hardware-2026-11-18.txt`](docs/evidence/p2-physical-hardware-2026-11-18.txt), [`docs/evidence/whatsapp-p2-2026-11-18.txt`](docs/evidence/whatsapp-p2-2026-11-18.txt) |
 | P3 | Opaque relay / multi-hop | **Not implemented** | — |
 | P4 | BLE discovery | **Not implemented** | — |
 | P5 | Wi-Fi Direct transport | **Not implemented** | — |
 | P6 | Dynamic routing | **Not implemented** | — |
-| P7 | Real WhatsApp over A → B → C | **Not run** | Blocked: only one physical phone, and no WhatsApp account on the test devices |
+| P7 | Real WhatsApp over A → B → C | **Partial: WhatsApp captured and connected; no delivery observed** | Blocked on a second physical phone for the two-phone gate and on P3–P6 for the mesh |
 
 What is real today:
 
@@ -69,6 +74,11 @@ What is real today:
 - A restricted SOCKS5 server with an exact-match destination policy, a strict,
   bounded binary frame codec (`OMSH` v1), socket-level unit tests and TLS
   gateway tests.
+- **Real WhatsApp through the tunnel**, without modifying it: a
+  WhatsApp-targeting debug build captured only `com.whatsapp`, and WhatsApp's
+  own log reached `result=ready` / `connecting=>connected` over IPv4 on its
+  chat stream and on `:443`, through a loopback gateway and through a separate
+  emulator gateway. That is connectivity evidence, not messaging evidence.
 - A Compose UI that never presents a link or an engine as "Internet connected",
   and that fails closed (route NONE, Internet FAILED) when the gateway is
   missing, unpinned or wrongly authenticated.
@@ -78,20 +88,23 @@ What is **not** real today:
 - There is **no relay node B and no multi-hop path**. P2 is a single gateway
   hop: A dials C directly over TLS and C exits to the Internet.
 - There is no mesh discovery (BLE, Wi-Fi Direct) and no dynamic routing.
-- No test has ever run against WhatsApp itself, and no run has used **two**
-  physical phones. P2 has been exercised on a real Redmi 13C (HyperOS 2.0,
-  Android 15, `arm64-v8a`) in each role: as the client against an emulator
-  gateway, and as the gateway reached by an emulator client over real Wi-Fi.
-  The rest of the runtime evidence is two x86_64 Android 16 emulators on one
-  host with a bundled test client and an `adb forward`. The app substitution is
-  explicit in the UI and in
+- WhatsApp **connects** through P2 but has never been shown to **deliver a
+  message** over it: the longest observed stream lasted 76 s and ended in a
+  clean EOF while the phone was locked, with no reconnect and no message sent
+  or received. No run has used **two** physical phones. P2 has been exercised
+  on a real Redmi 13C (HyperOS 2.0, Android 15, `arm64-v8a`) in each role: as
+  the client against an emulator gateway, and as the gateway reached by an
+  emulator client over real Wi-Fi. The rest of the runtime evidence is two
+  x86_64 Android 16 emulators on one host with a bundled test client and an
+  `adb forward`. The app substitution is explicit in the UI and in
   [`docs/ADR/0003-debug-target-and-lab-socks.md`](docs/ADR/0003-debug-target-and-lab-socks.md).
 - There is no mutual TLS, no Android Keystore protection for the token, no
   quota/revocation UI and no release signing.
 
 The final MVP acceptance criterion from `GOAL_PROMPT.md` — real WhatsApp
 messages travelling A → B → C → Internet with A offline — is therefore **not
-met**.
+met**. A real WhatsApp client does connect through a single gateway; it has not
+been shown to deliver a message, and there is no relay or offline client.
 
 ---
 
@@ -185,9 +198,13 @@ $env:JAVA_HOME = 'C:\Program Files\Java\jdk-21'
 # Debug app (captures com.openmesh.testclient) and the lab client
 .\gradlew.bat :app:assembleDebug :testclient:assembleDebug
 
-# Unit tests (45 tests: frame codec, destination policy, SOCKS5 server,
-# tun2socks config, TLS loopback, TLS gateway + pinned client)
+# Unit tests (55 tests: frame codec, destination policy, SOCKS5 server,
+# DNS/AAAA filter, tun2socks config, TLS loopback, TLS gateway + pinned client)
 .\gradlew.bat test
+
+# WhatsApp-targeting debug APK (same code, captures com.whatsapp; run it from
+# cmd so PowerShell does not split the property at the dot)
+cmd /c "gradlew.bat :app:assembleDebug -PopenmeshTarget=com.whatsapp --console=plain"
 
 # Release APK (captures com.whatsapp; unsigned, capture-only)
 .\gradlew.bat :app:assembleRelease
@@ -207,12 +224,13 @@ the build starts.
 | Variant | Application ID | Captured package | Data path |
 |---|---|---|---|
 | `debug` | `com.openmesh.app.debug` | `com.openmesh.testclient` | Direct gateway (P2), lab direct SOCKS (P1) or capture-only (P0); plus the gateway service and the debug control receiver |
+| `debug` + `-PopenmeshTarget=com.whatsapp` | `com.openmesh.app.debug` | `com.whatsapp` | Same as above, same signing key; this is the build used for the WhatsApp evidence |
 | `release` | `com.openmesh.app` | `com.whatsapp` | Direct gateway (P2) if configured, otherwise capture-only. Unsigned and unvalidated |
 
-The debug substitution exists because the emulator has no WhatsApp account and
-because validating a VPN path must not require automating WhatsApp. It proves
-capture mechanics, not WhatsApp behaviour. The UI displays the substitution on
-the target card.
+The debug substitution exists because validating a VPN path must not require
+automating WhatsApp. Run once against the lab client and once with
+`-PopenmeshTarget=com.whatsapp`: the first proves capture mechanics, the second
+is the real target. The UI displays the captured package on the target card.
 
 ---
 
@@ -377,6 +395,43 @@ Lab pitfalls, both observed:
 Full logs:
 [`docs/evidence/p2-physical-hardware-2026-11-18.txt`](docs/evidence/p2-physical-hardware-2026-11-18.txt).
 
+#### 6.5.2 WhatsApp-targeting run (validated 2026-11-18)
+
+The same debug code can capture the real WhatsApp package:
+
+```powershell
+cmd /c "gradlew.bat :app:assembleDebug -PopenmeshTarget=com.whatsapp --console=plain"
+& $adb install -r -t app\build\outputs\apk\debug\app-debug.apk
+```
+
+It keeps the application id `com.openmesh.app.debug`, so it replaces the lab
+build on the device, and it is still debug-signed. Start a P2 gateway on a
+second Android instance (the emulator works), point the phone client at it, then
+start WhatsApp normally and read its own log:
+
+```powershell
+& $adb shell am start -n com.whatsapp/.Main
+& $adb logcat -d | Select-String 'WAJMNSStream'
+```
+
+Expected when the tunnel works:
+
+```text
+WAJMNSStream/impl/report result=ready, ... port=5222, connectedIPVersion=4
+WAJMNSStream/impl/state-changed (connecting=>connected)
+```
+
+Observed exactly that through a loopback gateway and through an emulator
+gateway. **A connected socket is not a delivered message:** the longest stream
+lasted 76 s and ended in a clean EOF while the phone was locked, with no
+reconnect and no message sent or received. Do not read this run as proof that
+WhatsApp messaging works over OpenMesh.
+
+Emulator note: if the emulator gateway has both Wi-Fi and cellular up, its own
+probe can fail with `SOCKS reply 4` (`REPLY_HOST_UNREACHABLE`). `adb shell svc
+data disable` on the emulator fixes it; this is an emulator networking
+artefact, not a tunnel defect.
+
 ### 6.6 P0 fail-closed run
 
 1. Stop the VPN.
@@ -409,8 +464,11 @@ notification is removed.
 - The release build is **not usable for real WhatsApp traffic yet**. It targets
   `com.whatsapp`, but without a configured gateway it is capture-only and drops
   everything WhatsApp sends. Do not install it expecting messages to work.
-- The debug build captures only `com.openmesh.testclient`; it does not and
-  cannot capture WhatsApp.
+  The same is true of the WhatsApp-targeting **debug** lab APK published as
+  `v0.2.0-p2-whatsapp-lab`: with no gateway it removes WhatsApp's connectivity
+  entirely. It is a test artifact, not a product.
+- The default debug build captures only `com.openmesh.testclient`; only the
+  `-PopenmeshTarget=com.whatsapp` build captures WhatsApp, and only that one.
 - The P2 gateway listens on `0.0.0.0:8443`. It requires TLS 1.3 with a pinned
   certificate and a per-gateway token, and it applies the destination policy,
   but it is **not hardened against a hostile network**: no mutual TLS, no

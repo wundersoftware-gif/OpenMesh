@@ -2,10 +2,12 @@ OpenMesh **0.2.0-p2** — direct gateway over TLS 1.3 (lab build).
 
 > **Update 2026-11-18:** after this release was published, P2 was validated on
 > a physical Redmi 13C (HyperOS 2.0 / Android 15, `arm64-v8a`) in each role — as
-> the client, and as a gateway reached by an emulator over real Wi-Fi. The APK
-> hashes below are unchanged. See
-> `docs/evidence/p2-physical-hardware-2026-11-18.txt`. Two physical phones in
-> one run and WhatsApp remain untested.
+> the client, and as a gateway reached by an emulator over real Wi-Fi — and real
+> WhatsApp was carried through the P2 path with a WhatsApp-targeting debug build
+> (published separately as `v0.2.0-p2-whatsapp-lab`). The APK hashes below are
+> unchanged. See `docs/evidence/p2-physical-hardware-2026-11-18.txt` and
+> `docs/evidence/whatsapp-p2-2026-11-18.txt`. WhatsApp connected but no message
+> delivery was observed; two physical phones in one run remain untested.
 
 This release adds the **P2 data path**: a phone can tunnel one allowlisted app
 through another phone that acts as a gateway, over an authenticated TLS 1.3
