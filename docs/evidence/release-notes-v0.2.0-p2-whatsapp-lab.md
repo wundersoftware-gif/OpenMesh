@@ -48,7 +48,7 @@ Gateway-side capture: `docs/evidence/whatsapp-p2-2026-11-18.pcap`.
 
 | File | SHA-256 | Size |
 |---|---|---|
-| `OpenMesh-0.2.0-p2-whatsapp-debug.apk` | `09209178FC46692BBA6CEEB140ACFC55FCF5FDFB3B08A3996AE86345DF873322` | 39 053 470 B |
+| `OpenMesh-0.2.0-p2-whatsapp-debug.apk` | `09209178FC46692BBA6CEEB140ACFC55FCF5FDFB3B08A3996AE86345DF873322` | 39 119 403 B |
 
 Application id `com.openmesh.app.debug`, `versionCode` 2. Debug-signed with the
 standard Android debug key; no signing keystore is used for this project yet.
