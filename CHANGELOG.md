@@ -133,6 +133,8 @@ implemented.
 
 - No relay (B), no multi-hop, no BLE, no Wi-Fi Direct, no routing.
 - Not run against WhatsApp: no WhatsApp account exists on the test devices.
+  (Superseded on 2026-11-18 by the Unreleased entry above: WhatsApp connected
+  through P2, but message delivery is still unproven.)
 - Physical runs use **one real phone at a time** (phone client + emulator
   gateway, or phone gateway + emulator client over real Wi-Fi). Two physical
   phones in the same run remain pending.
